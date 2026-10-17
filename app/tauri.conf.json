@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "dev.krinxy.klecks",
   "build": {
-    "beforeDevCommand": { "script": "trunk serve", "cwd": "../ui" },
-    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": { "script": "trunk -q serve", "cwd": "../ui" },
+    "devUrl": "http://127.0.0.1:1420",
     "beforeBuildCommand": { "script": "trunk build --release", "cwd": "../ui" },
     "frontendDist": "../ui/dist"
   },
