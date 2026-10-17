@@ -20,8 +20,11 @@ plan derived from it, and a "what fits here" tool. Offline, Windows + Linux, one
 - **OOP style:** structs with `impl`, dependency injection through constructors. `#[tauri::command]`
   and Leptos `#[component]` are the only free functions, kept as thin shims.
 - **Every Rust file starts with the owner header** (Owner / Contributors / Last modified).
-- Frameless window with our own min/max/close buttons; design is its own thing (survey blueprint),
-  not a copy of gutla.
+- Frameless window with our own min/max/close buttons. Design: gutla's marble black and glass,
+  sage-green palette (`#A5B497` accent, `#7B8560` moss, `#85815B` olive), a field of drifting soft
+  "splats" as the one memorable element. No grid/blueprint look (owner dislikes it), no ALL-CAPS
+  eyebrows, no monospace data chips. Single work tree only (see global CLAUDE.md).
+- **Work only in this checkout.** No git worktrees, no side branches.
 
 ## Layout
 

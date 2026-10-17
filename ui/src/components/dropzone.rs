@@ -26,7 +26,8 @@ async fn validate(path: String, state: RwSignal<DropState>) {
     }
 }
 
-/// The one input of the app: drop a video of the room here, or click to pick one.
+/// The one input of the app: a video of the room, dropped anywhere in the window or chosen
+/// with the file dialog. Behind the card a field of soft "splats" reacts to the drag.
 #[component]
 pub fn DropZone(#[prop(into)] gpu_ready: Signal<bool>) -> impl IntoView {
     let state = RwSignal::new(DropState::Idle);
@@ -54,61 +55,55 @@ pub fn DropZone(#[prop(into)] gpu_ready: Signal<bool>) -> impl IntoView {
     };
 
     view! {
-        <section class="stage">
-            <div
-                class="dropzone"
-                class:is-hover=move || state.get() == DropState::Hover
-                class:is-accepted=move || matches!(state.get(), DropState::Accepted(_))
-                class:is-rejected=move || matches!(state.get(), DropState::Rejected(_))
-                on:click=pick
-                role="button"
-                tabindex="0"
-            >
-                <span class="reg reg-tl"></span>
-                <span class="reg reg-tr"></span>
-                <span class="reg reg-bl"></span>
-                <span class="reg reg-br"></span>
+        <section
+            class="stage"
+            class:is-hover=move || state.get() == DropState::Hover
+            class:is-accepted=move || matches!(state.get(), DropState::Accepted(_))
+            class:is-rejected=move || matches!(state.get(), DropState::Rejected(_))
+        >
+            <div class="splatfield" aria-hidden="true">
+                <span class="splat s1"></span>
+                <span class="splat s2"></span>
+                <span class="splat s3"></span>
+                <span class="splat s4"></span>
+                <span class="splat s5"></span>
+                <span class="splat s6"></span>
+            </div>
+            <div class="card">
                 {move || match state.get() {
                     DropState::Accepted(video) => view! {
-                        <div class="drop-body">
-                            <p class="eyebrow">"video ready"</p>
-                            <h2 class="drop-title">{video.name.clone()}</h2>
-                            <p class="drop-sub mono">{format!("{:.1} MB", video.size_mb)}</p>
-                            <button
-                                class="btn-primary"
-                                disabled=move || !gpu_ready.get()
-                                title=move || if gpu_ready.get() {
-                                    "The reconstruction pipeline arrives in the next phase"
-                                } else {
-                                    "No allowed GPU — see the status bar"
-                                }
-                                on:click=move |ev| ev.stop_propagation()
-                            >
-                                "Reconstruct room"
-                            </button>
+                        <h1 class="card-title">{video.name.clone()}</h1>
+                        <p class="card-text">{format!("{:.1} MB, ready to scan.", video.size_mb)}</p>
+                        <div class="card-actions">
+                            <button class="btn btn-primary" disabled=true>"Reconstruct room"</button>
+                            <button class="btn btn-ghost" on:click=pick>"Choose another"</button>
                         </div>
+                        <p class="card-note" class:card-note-bad=move || !gpu_ready.get()>
+                            {move || if gpu_ready.get() {
+                                "Reconstruction is not built yet. Your video is checked and waiting."
+                            } else {
+                                "No allowed GPU was found, so the scan can't start. Details are at the bottom left."
+                            }}
+                        </p>
                     }.into_any(),
                     DropState::Rejected(message) => view! {
-                        <div class="drop-body">
-                            <p class="eyebrow eyebrow-bad">"can't use that"</p>
-                            <h2 class="drop-title">{message}</h2>
-                            <p class="drop-sub">"Drop another video or click to choose one."</p>
+                        <h1 class="card-title">{message}</h1>
+                        <p class="card-text">"Drop another video or choose one from your computer."</p>
+                        <div class="card-actions">
+                            <button class="btn btn-primary" on:click=pick>"Choose video"</button>
                         </div>
                     }.into_any(),
                     DropState::Hover => view! {
-                        <div class="drop-body">
-                            <p class="eyebrow">"release to load"</p>
-                            <h2 class="drop-title">"Drop it"</h2>
-                        </div>
+                        <h1 class="card-title">"Release to load it"</h1>
+                        <p class="card-text">"Drop the video anywhere in this window."</p>
                     }.into_any(),
                     DropState::Idle => view! {
-                        <div class="drop-body">
-                            <svg class="crosshair" viewBox="0 0 48 48" aria-hidden="true">
-                                <circle cx="24" cy="24" r="9" />
-                                <path d="M24 2v12M24 34v12M2 24h12M34 24h12" />
-                            </svg>
-                            <h2 class="drop-title">"Drop a video of your room"</h2>
-                            <p class="drop-sub">"or click to choose a file · mp4 mov mkv webm avi"</p>
+                        <h1 class="card-title">"Drop a video of your room"</h1>
+                        <p class="card-text">
+                            "Walk slowly through the room, then drop the file here. mp4, mov, mkv, webm and avi work."
+                        </p>
+                        <div class="card-actions">
+                            <button class="btn btn-primary" on:click=pick>"Choose video"</button>
                         </div>
                     }.into_any(),
                 }}

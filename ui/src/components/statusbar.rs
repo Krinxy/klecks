@@ -7,32 +7,32 @@ use leptos::prelude::*;
 
 use crate::model::AppStatus;
 
-/// Bottom strip: GPU guard result, quality preset, config problems.
+/// Bottom strip: which GPU is used (or why none is), quality preset, config problems.
 #[component]
 pub fn StatusBar(status: RwSignal<Option<AppStatus>>) -> impl IntoView {
     view! {
         <footer class="statusbar">
             {move || match status.get() {
-                None => view! { <span class="chip chip-dim">"checking GPU…"</span> }.into_any(),
+                None => view! { <span class="chip chip-dim">"Checking GPU…"</span> }.into_any(),
                 Some(s) => {
                     let gpu_chip = match (&s.gpu, &s.gpu_error) {
                         (Some(gpu), _) => view! {
-                            <span class="chip chip-ok" title=format!("driver {}", gpu.driver)>
+                            <span class="chip chip-ok" title=format!("{} on {}, driver {}", gpu.vendor, gpu.backend, gpu.driver)>
                                 <i class="dot"></i>
-                                {format!("{} · {} · {}", gpu.name, gpu.backend, gpu.vendor)}
+                                {gpu.name.clone()}
                             </span>
                         }
                         .into_any(),
                         (None, error) => view! {
                             <span class="chip chip-bad">
                                 <i class="dot"></i>
-                                {error.clone().unwrap_or_else(|| "no GPU".into())}
+                                {error.clone().unwrap_or_else(|| "No GPU found".into())}
                             </span>
                         }
                         .into_any(),
                     };
                     let preset = s.preset.clone().map(|p| view! {
-                        <span class="chip">{format!("preset {p}")}</span>
+                        <span class="chip">{format!("{p} quality")}</span>
                     });
                     let config = s.config_error.clone().map(|e| view! {
                         <span class="chip chip-bad">{e}</span>
@@ -41,7 +41,6 @@ pub fn StatusBar(status: RwSignal<Option<AppStatus>>) -> impl IntoView {
                 }
             }}
             <span class="spacer"></span>
-            <span class="chip chip-dim">"offline"</span>
         </footer>
     }
 }
