@@ -1,0 +1,12 @@
+# Optional, off by default. The core pipeline is fully offline and never needs this.
+# The API key is NOT stored here: set the environment variable named in `api_key_env`.
+
+gemini:
+  enabled: false
+  api_key_env: KLECKS_GEMINI_API_KEY
+  model: ""                 # set when enabling
+  cache_by_image_hash: true # the same image is never sent twice
+  batch_per_scan: true      # one request per scan, not one per object
+  budget:
+    max_requests_per_minute: 5
+    max_requests_per_day: 50

@@ -1,0 +1,22 @@
+[package]
+name = "klecks-app"
+description = "klecks desktop shell (Tauri)"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+name = "klecks_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde.workspace = true
+serde_json.workspace = true
+klecks-settings.workspace = true
+klecks-gpu.workspace = true

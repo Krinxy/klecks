@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = ["core/settings", "core/gpu", "app"]
+# ui/ is the wasm (Leptos) frontend with its own workspace; Trunk builds it.
+exclude = ["ui"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Krinxy"]
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml_ng = "0.10"
+thiserror = "2"
+dirs = "7"
+klecks-settings = { path = "core/settings" }
+klecks-gpu = { path = "core/gpu" }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

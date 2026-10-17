@@ -1,0 +1,18 @@
+# Dev lab only — never shipped. Create with:
+#   conda env create -f lab/environment-cuda.yml
+# torch comes from PyTorch's pip index (their conda channel is no longer maintained).
+name: klecks-lab
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - opencv
+  - onnx
+  - onnxruntime-gpu
+  - jupyterlab
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu128
+      - torch
+      - torchvision

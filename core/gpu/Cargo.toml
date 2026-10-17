@@ -1,0 +1,14 @@
+[package]
+name = "klecks-gpu"
+description = "GPU detection and the never-on-CPU guard for klecks"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+klecks-settings.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+wgpu = { version = "30", default-features = false, features = ["vulkan", "dx12", "wgsl"] }
+pollster = "1"

@@ -1,0 +1,10 @@
+# Video -> frames. Longer runs and denser sampling are allowed on purpose: quality over speed.
+
+capture:
+  extensions: [mp4, mov, mkv, webm, avi]
+  sample_fps: 3             # frames per second extracted from the video
+  max_frames: 600           # hard cap so the pose stage stays tractable
+  min_sharpness: 80.0       # variance-of-Laplacian; blurrier frames are dropped
+  min_coverage_pct: 85      # share of the room (yaw sectors) that must be seen before training
+  min_duration_s: 60
+  max_duration_s: 300

@@ -1,0 +1,23 @@
+# Reconstruction quality. Pick a preset with `preset`, tune single values under `presets`.
+
+pipeline:
+  preset: high
+  presets:
+    draft:
+      train_iterations: 7000
+      max_splats: 1000000
+    high:
+      train_iterations: 30000
+      max_splats: 3000000
+    max:
+      train_iterations: 60000
+      max_splats: 6000000
+
+  floorplan:
+    slice_min_m: 0.10       # height band above the floor used for the occupancy map
+    slice_max_m: 1.80
+    cell_size_m: 0.02
+
+  scale:
+    # One real measurement turns arbitrary reconstruction units into metres.
+    reference: manual       # manual | door_height_2_05

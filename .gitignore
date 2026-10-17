@@ -1,0 +1,24 @@
+# Rust
+/target/
+/ui/target/
+/ui/dist/
+/app/gen/
+
+# Local state — never commit
+/models/
+/scans/
+.env
+*.local.yaml
+.claude/
+
+# Python lab
+lab/.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Big artefacts
+*.ply
+*.splat
+*.onnx
+*.safetensors

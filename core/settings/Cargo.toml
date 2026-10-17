@@ -1,0 +1,13 @@
+[package]
+name = "klecks-settings"
+description = "YAML configuration loading and platform paths for klecks"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_yaml_ng.workspace = true
+thiserror.workspace = true
+dirs.workspace = true
