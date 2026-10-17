@@ -6,6 +6,7 @@
 mod app;
 mod bridge;
 mod components;
+mod flow;
 mod model;
 
 use app::App;

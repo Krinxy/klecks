@@ -1,6 +1,19 @@
 # Reconstruction quality. Pick a preset with `preset`, tune single values under `presets`.
 
 pipeline:
+  # Temporary reconstruction backend: runs lab/vggt_try.py in the conda lab (dev only, not shippable).
+  # Machine-specific paths belong in your override file, not here:
+  #   %APPDATA%\klecks\pipeline.yaml  ->  pipeline: { reconstruct: { python: "D:/Projects/klecks-lab/python.exe", ... } }
+  # Later replaced by an ONNX model run from Rust (backend: onnx).
+  reconstruct:
+    backend: python_lab
+    python: ""              # python.exe of the lab env; empty = backend not configured
+    script: ""              # path to lab/vggt_try.py; empty = ../lab/vggt_try.py next to config/
+    hf_home: ""             # where model weights are cached; empty = inherit HF_HOME
+    frames: 32              # frames sampled from the video (VRAM: ~11 GB at 32)
+    conf_percentile: 40.0   # drop the least confident N percent of points
+    view_points: 1200000    # size of the downsampled cloud shown in the viewer
+
   preset: high
   presets:
     draft:

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core/settings", "core/gpu", "app"]
+members = ["core/settings", "core/gpu", "core/reconstruct", "app"]
 # ui/ is the wasm (Leptos) frontend with its own workspace; Trunk builds it.
 exclude = ["ui"]
 
@@ -18,6 +18,7 @@ thiserror = "2"
 dirs = "7"
 klecks-settings = { path = "core/settings" }
 klecks-gpu = { path = "core/gpu" }
+klecks-reconstruct = { path = "core/reconstruct" }
 
 [profile.release]
 codegen-units = 1

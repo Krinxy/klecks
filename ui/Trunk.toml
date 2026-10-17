@@ -3,7 +3,7 @@ target = "index.html"
 dist = "dist"
 
 [watch]
-watch = ["src", "styles"]
+watch = ["src", "styles", "public"]
 
 [serve]
 # Only the IPv4 loopback: no listing of every hosts-file alias, and nothing reachable from the LAN.

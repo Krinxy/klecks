@@ -3,8 +3,10 @@
 Film your room with a phone, get a walkable 3D copy and a floor plan, then find out what fits
 in that corner. Offline, GPU-only, one program for Windows and Linux.
 
-> Status: **phase 1 scaffold** — window, config, GPU guard and the video drop zone work.
-> The reconstruction pipeline is not built yet; see [Roadmap](#roadmap).
+> Status: **first working pipeline.** Drop a video, the app reconstructs the room as a 3D point
+> cloud on your GPU and you can fly through it. The reconstruction currently runs through the
+> Python lab (dev only, see [Reconstruction backend](#reconstruction-backend)); splats, floor plan
+> and the fit tool are next, see [Roadmap](#roadmap).
 
 ## How it works
 
@@ -23,12 +25,36 @@ phone video ──► frames ──► camera poses ──► 3D Gaussian Splatt
   Video decoding and file IO are CPU by nature and not covered by that rule.
 - **NVIDIA is the tested target.** AMD is allowed by config but untested (no AMD machine).
 
+## Reconstruction backend
+
+`Reconstructor` (core/reconstruct) is a trait; today's implementation `PythonLabReconstructor`
+starts `lab/vggt_try.py` (VGGT-1B: camera poses + depth, then a point cloud) in the conda lab and
+reads its progress. **This is a dev bridge and can't be shipped** (it needs a Python environment);
+an ONNX model run from Rust replaces it. Set it up once with a machine-specific override that stays
+out of git, `%APPDATA%\klecks\pipeline.yaml`:
+
+```yaml
+pipeline:
+  reconstruct:
+    python: "D:/Projects/klecks-lab/python.exe"   # conda env from lab/environment-cuda.yml
+    hf_home: "D:/Models/huggingface"                # where the 5 GB of weights are cached
+```
+
+Scans go to `paths.scans_dir` (override it the same way in `klecks.yaml`; each scan is ~100 MB).
+The first scan downloads the weights (CC-BY-NC-4.0, non-commercial). Without this setup the app
+still starts and says what is missing.
+
+Without the GUI: `cargo run -p klecks-reconstruct --example scan -- media/clip.mp4 [cancel-after-s]`.
+Developer shortcuts: `KLECKS_OPEN_SCENE=<scan folder>` opens the viewer on start,
+`KLECKS_AUTOSCAN=<video>` starts a scan on start.
+
 ## Layout
 
 ```
 config/        YAML settings (klecks, capture, pipeline, gemini) + deploy scripts
 core/settings  YAML loading, user overrides, platform paths
 core/gpu       GPU detection and the never-on-CPU guard
+core/reconstruct  Reconstructor trait + Python lab backend (progress, cancel)
 app/           Tauri shell: window, commands, installer config
 ui/            Leptos (wasm) frontend, built with Trunk
 lab/           Python/conda lab for experiments and ONNX export (not shipped)
@@ -73,10 +99,10 @@ For "carry it around": copy the program folder and the `models` folder; it runs 
 
 | Phase | Content |
 |---|---|
-| 1 | Scaffold, config, GPU guard, frameless window, video drop zone **(this)** |
-| 0 | Spikes that decide the engine: Brush as a library, pose model via ONNX on GPU, Spark viewer on Linux |
-| 2 | Capture guide, frame extraction, quality check |
-| 3 | Poses + Brush training + 3D fly-through viewer |
+| 1 | Scaffold, config, GPU guard, frameless window, video drop zone **(done)** |
+| 0 | Spikes: VGGT on the GPU **(done, works)**; open: VGGT → ONNX run from Rust, Brush as a library, viewer on Linux |
+| 2 | Capture guide in the app, quality check (frame extraction exists in the lab script) |
+| 3 | Point-cloud viewer **(done)**; open: Brush splat training, better coverage from a walk-through video |
 | 4 | Metric scale + 2D floor plan |
 | 5 | Box furniture, drag and drop, "does it fit in this corner" |
 | 6 | Real furniture from the scan (segmentation), optional Gemini labelling |

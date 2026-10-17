@@ -54,7 +54,8 @@ impl AppPaths {
         if trimmed.is_empty() {
             fallback()
         } else {
-            Path::new(trimmed).to_path_buf()
+            // Re-assembling the components gives one separator style ("D:/a/b" -> "D:\a\b" on Windows).
+            Path::new(trimmed).components().collect()
         }
     }
 }

@@ -201,3 +201,62 @@ html, body {
 .chip-bad { color: var(--bad); border-color: rgba(217, 122, 102, 0.35); overflow: hidden; text-overflow: ellipsis; }
 .chip-dim { background: transparent; border-color: transparent; color: var(--text-faint); }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 10px currentColor; }
+
+/* ── progress ──────────────────────────────────────────────── */
+.stage.is-busy .splat { opacity: 0.55; animation-duration: calc(var(--t, 40s) * 0.45); }
+
+.steps { list-style: none; padding: 0; margin: 28px 0 0; display: grid; gap: 13px; }
+.step { display: flex; align-items: center; gap: 12px; color: var(--text-faint); transition: color 300ms ease; }
+.step-dot { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid currentColor; flex: none; }
+.step.is-done { color: var(--text-dim); }
+.step.is-done .step-dot { background: var(--sage); border-color: var(--sage); }
+.step.is-current { color: var(--text); }
+.step.is-current .step-dot { border-color: var(--sage); box-shadow: 0 0 12px var(--sage); animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 50% { box-shadow: 0 0 2px var(--sage); } }
+@media (prefers-reduced-motion: reduce) { .step.is-current .step-dot { animation: none; } }
+
+.bar { margin-top: 26px; height: 4px; border-radius: 99px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.bar span { display: block; height: 100%; background: var(--sage); border-radius: 99px; transition: width 700ms var(--ease); }
+
+.card-error { white-space: pre-wrap; user-select: text; color: var(--bad); font-size: 13px; }
+
+/* ── earlier scans ─────────────────────────────────────────── */
+.recent { margin-top: 34px; padding-top: 20px; border-top: 1px solid var(--line-soft); }
+.recent-title { color: var(--text-faint); font-size: 12.5px; margin-bottom: 8px; }
+.recent-list { list-style: none; padding: 0; display: grid; gap: 2px; }
+.recent-row {
+  display: flex; justify-content: space-between; align-items: baseline; width: 100%;
+  padding: 9px 12px; border-radius: 10px; border: 0; background: transparent;
+  color: var(--text); font: inherit; cursor: pointer; transition: background 140ms ease;
+}
+.recent-row:hover { background: rgba(255, 255, 255, 0.06); }
+.recent-meta { color: var(--text-faint); font-size: 13px; }
+
+/* ── 3D viewer ─────────────────────────────────────────────── */
+.viewer { position: absolute; inset: 0; overflow: hidden; }
+.viewer-host { position: absolute; inset: 0; }
+.viewer-host canvas { display: block; cursor: grab; touch-action: none; }
+.viewer-host canvas:active { cursor: grabbing; }
+
+.hud { position: absolute; left: 16px; right: 16px; display: flex; align-items: center; gap: 8px; z-index: 2; }
+.hud-top { top: calc(var(--titlebar-h) + 6px); }
+.hud .btn { padding: 8px 16px; border-radius: 10px; font-size: 13px; }
+.hud .chip { background: rgba(10, 10, 11, 0.55); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+.hud-hint {
+  position: absolute; left: 50%; bottom: 56px; transform: translateX(-50%); z-index: 2;
+  padding: 8px 18px; border-radius: 999px; font-size: 12.5px; color: var(--text-dim); white-space: nowrap;
+  background: rgba(10, 10, 11, 0.55); border: 1px solid var(--line-soft);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); pointer-events: none;
+}
+.viewer-overlay {
+  position: absolute; inset: 0; z-index: 3; display: grid; place-items: center; padding: 32px;
+  color: var(--text-dim); background: rgba(10, 10, 11, 0.7); text-align: center;
+}
+.viewer-overlay-bad { color: var(--bad); }
+
+/* readable chrome over bright scenes: soft dark scrims at the top and bottom edge */
+.viewer::before, .viewer::after { content: ""; position: absolute; left: 0; right: 0; z-index: 1; pointer-events: none; }
+.viewer::before { top: 0; height: 130px; background: linear-gradient(rgba(10, 10, 11, 0.8), rgba(10, 10, 11, 0)); }
+.viewer::after { bottom: 0; height: 110px; background: linear-gradient(rgba(10, 10, 11, 0), rgba(10, 10, 11, 0.8)); }
+.hud .btn-ghost { background: rgba(10, 10, 11, 0.55); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); color: var(--text); }
+.hud .btn-ghost:hover { background: rgba(255, 255, 255, 0.12); }

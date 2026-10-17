@@ -13,7 +13,9 @@ plan derived from it, and a "what fits here" tool. Offline, Windows + Linux, one
   hardware. Any new ML code must go through the GPU guard in `core/gpu` and must not rely on a
   silent CPU fallback (ONNX Runtime and torch both fall back by default — disable it explicitly).
 - **Shipped runtime is Rust.** No Python/conda in the installer. Python lives in `lab/` for
-  experiments and ONNX export only.
+  experiments and ONNX export only. **Exception, dev only:** `core/reconstruct`'s
+  `PythonLabReconstructor` runs `lab/vggt_try.py` as a stopgap behind the `Reconstructor` trait; it
+  is replaced by an ONNX model run from Rust and must not be shipped.
 - **Offline by default.** Gemini is opt-in, never on the critical path, key from the environment
   only (never in YAML/git), and every call goes through the cache + budget in `config/gemini.yaml`.
 - **All tunables are YAML in `config/`**, loaded by `core/settings`. No magic numbers in code.
@@ -52,6 +54,14 @@ When running the built exe from a target dir, set `KLECKS_CONFIG_DIR`.
 - DirectML is in maintenance and ROCm is deprecated in ONNX Runtime; prefer WinML / MIGraphX
   for AMD when that work starts.
 - Brush is still a proof of concept; phase 0 verifies it before anything depends on it.
+- Machine-specific paths (lab python, HF cache, scans dir) live in `%APPDATA%\klecks\*.yaml`
+  overrides, never in `config/`. The reconstruct backend refuses to start when they are missing.
+- Dev builds find `config/` as a copy in `target/debug/config` (Tauri copies resources), so
+  `lab/` is looked up in parent folders; a stale copy can hide new config keys until the next build.
+- Dev shortcuts: `KLECKS_OPEN_SCENE=<scan dir>`, `KLECKS_AUTOSCAN=<video>`. The owner usually has
+  `cargo tauri dev` running: never kill `klecks-app`/`trunk` by name, stop only PIDs you started.
+- The viewer reads scans through Tauri's asset protocol (`protocol-asset` feature, scope set at
+  runtime to the scans dir); the CSP needs `asset:` and `http://asset.localhost` in `connect-src`.
 - Phone videos carry a rotation tag (`rotation=-90`) that OpenCV ignores: always rotate frames
   explicitly when extracting (see `lab/vggt_try.py`), or models get sideways images.
 - VGGT weights are CC-BY-NC-4.0 (non-commercial). Keep that in mind before distributing klecks.

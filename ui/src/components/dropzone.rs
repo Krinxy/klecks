@@ -7,6 +7,9 @@ use leptos::prelude::*;
 use wasm_bindgen::JsValue;
 
 use crate::bridge::TauriBridge;
+use crate::components::recent_scans::RecentScans;
+use crate::components::stage::Stage;
+use crate::flow::ScanFlow;
 use crate::model::{DropState, VideoInfo};
 
 /// Reads `event.payload.paths` from a Tauri drag-drop event.
@@ -28,8 +31,9 @@ async fn validate(path: String, state: RwSignal<DropState>) {
 
 /// The one input of the app: a video of the room, dropped anywhere in the window or chosen
 /// with the file dialog. Behind the card a field of soft "splats" reacts to the drag.
+/// `blocker` is the reason a scan can't start right now (no GPU, backend not set up).
 #[component]
-pub fn DropZone(#[prop(into)] gpu_ready: Signal<bool>) -> impl IntoView {
+pub fn DropZone(#[prop(into)] blocker: Signal<Option<String>>, flow: ScanFlow) -> impl IntoView {
     let state = RwSignal::new(DropState::Idle);
 
     leptos::task::spawn_local(async move {
@@ -54,38 +58,35 @@ pub fn DropZone(#[prop(into)] gpu_ready: Signal<bool>) -> impl IntoView {
         });
     };
 
+    let mood = Signal::derive(move || match state.get() {
+        DropState::Hover => "is-hover",
+        DropState::Accepted(_) => "is-accepted",
+        DropState::Rejected(_) => "is-rejected",
+        DropState::Idle => "",
+    });
+
     view! {
-        <section
-            class="stage"
-            class:is-hover=move || state.get() == DropState::Hover
-            class:is-accepted=move || matches!(state.get(), DropState::Accepted(_))
-            class:is-rejected=move || matches!(state.get(), DropState::Rejected(_))
-        >
-            <div class="splatfield" aria-hidden="true">
-                <span class="splat s1"></span>
-                <span class="splat s2"></span>
-                <span class="splat s3"></span>
-                <span class="splat s4"></span>
-                <span class="splat s5"></span>
-                <span class="splat s6"></span>
-            </div>
+        <Stage mood=mood>
             <div class="card">
                 {move || match state.get() {
-                    DropState::Accepted(video) => view! {
-                        <h1 class="card-title">{video.name.clone()}</h1>
-                        <p class="card-text">{format!("{:.1} MB, ready to scan.", video.size_mb)}</p>
-                        <div class="card-actions">
-                            <button class="btn btn-primary" disabled=true>"Reconstruct room"</button>
-                            <button class="btn btn-ghost" on:click=pick>"Choose another"</button>
-                        </div>
-                        <p class="card-note" class:card-note-bad=move || !gpu_ready.get()>
-                            {move || if gpu_ready.get() {
-                                "Reconstruction is not built yet. Your video is checked and waiting."
-                            } else {
-                                "No allowed GPU was found, so the scan can't start. Details are at the bottom left."
-                            }}
-                        </p>
-                    }.into_any(),
+                    DropState::Accepted(video) => {
+                        let to_scan = video.clone();
+                        view! {
+                            <h1 class="card-title">{video.name.clone()}</h1>
+                            <p class="card-text">{format!("{:.1} MB, ready to scan.", video.size_mb)}</p>
+                            <div class="card-actions">
+                                <button
+                                    class="btn btn-primary"
+                                    disabled=move || blocker.get().is_some()
+                                    on:click=move |_| flow.start(to_scan.path.clone(), to_scan.name.clone())
+                                >
+                                    "Reconstruct room"
+                                </button>
+                                <button class="btn btn-ghost" on:click=pick>"Choose another"</button>
+                            </div>
+                            {move || blocker.get().map(|reason| view! { <p class="card-note card-note-bad">{reason}</p> })}
+                        }.into_any()
+                    }
                     DropState::Rejected(message) => view! {
                         <h1 class="card-title">{message}</h1>
                         <p class="card-text">"Drop another video or choose one from your computer."</p>
@@ -105,9 +106,10 @@ pub fn DropZone(#[prop(into)] gpu_ready: Signal<bool>) -> impl IntoView {
                         <div class="card-actions">
                             <button class="btn btn-primary" on:click=pick>"Choose video"</button>
                         </div>
+                        <RecentScans flow=flow />
                     }.into_any(),
                 }}
             </div>
-        </section>
+        </Stage>
     }
 }

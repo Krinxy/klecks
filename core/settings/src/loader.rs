@@ -135,6 +135,8 @@ mod tests {
         assert!(settings.gpu.require_gpu);
         assert_eq!(settings.gpu.allowed_vendors, vec!["nvidia"]);
         assert!(settings.pipeline.active_preset().is_some());
+        assert_eq!(settings.pipeline.reconstruct.backend, "python_lab");
+        assert!(settings.pipeline.reconstruct.python.is_empty(), "no machine paths in shipped defaults");
         assert!(!settings.gemini.enabled);
     }
 

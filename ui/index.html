@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>klecks</title>
     <link data-trunk rel="css" href="styles/klecks.css" />
+    <link data-trunk rel="copy-file" href="public/viewer.js" />
+    <link data-trunk rel="copy-dir" href="public/vendor" />
+    <!-- Listed before the wasm init script so window.klecksViewer exists when the UI starts. -->
+    <script type="module" src="/viewer.js"></script>
     <link data-trunk rel="rust" href="Cargo.toml" data-wasm-opt="z" />
   </head>
   <body></body>

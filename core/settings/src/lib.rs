@@ -13,5 +13,5 @@ pub use loader::SettingsLoader;
 pub use paths::AppPaths;
 pub use schema::{
     AppSection, BudgetSettings, CaptureSettings, FloorplanSettings, GeminiSettings, GpuSettings,
-    PathsSection, PipelineSettings, PresetSettings, ScaleSettings, Settings,
+    PathsSection, PipelineSettings, PresetSettings, ReconstructSettings, ScaleSettings, Settings,
 };

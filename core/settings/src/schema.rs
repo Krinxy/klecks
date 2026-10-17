@@ -49,7 +49,19 @@ pub struct CaptureSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReconstructSettings {
+    pub backend: String,
+    pub python: String,
+    pub script: String,
+    pub hf_home: String,
+    pub frames: u32,
+    pub conf_percentile: f32,
+    pub view_points: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineSettings {
+    pub reconstruct: ReconstructSettings,
     pub preset: String,
     pub presets: BTreeMap<String, PresetSettings>,
     pub floorplan: FloorplanSettings,
