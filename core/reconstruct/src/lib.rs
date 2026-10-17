@@ -13,4 +13,4 @@ pub use cancel::CancelToken;
 pub use error::ReconstructError;
 pub use python_lab::PythonLabReconstructor;
 pub use reconstructor::Reconstructor;
-pub use types::{ProgressEvent, ScanReport, ScanRequest, ScanResult};
+pub use types::{ProgressEvent, SceneKind, ScanReport, ScanRequest, ScanResult};

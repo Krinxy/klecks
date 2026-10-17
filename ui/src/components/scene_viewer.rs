@@ -29,8 +29,10 @@ fn with_commas(value: u64) -> String {
 pub fn SceneViewer(scan: ScanResult, flow: ScanFlow) -> impl IntoView {
     let loading = RwSignal::new(true);
     let error = RwSignal::new(None::<String>);
+    let summary = RwSignal::new(String::new());
     let host = NodeRef::<leptos::html::Div>::new();
     let path = scan.scene_ply.clone();
+    let scale = scan.report.median_depth;
 
     // The element must exist before three.js can attach to it, hence the effect.
     Effect::new(move |started: Option<bool>| {
@@ -44,8 +46,12 @@ pub fn SceneViewer(scan: ScanResult, flow: ScanFlow) -> impl IntoView {
                 loading.set(false);
                 return;
             }
-            if let Err(message) = Viewer3d::load(&path).await {
-                error.set(Some(message));
+            match Viewer3d::load(&path, scale).await {
+                Ok(scene) => {
+                    let noun = if scene.kind == "splats" { "splats" } else { "points" };
+                    summary.set(format!("{} {noun}", with_commas(scene.count)));
+                }
+                Err(message) => error.set(Some(message)),
             }
             loading.set(false);
         });
@@ -53,12 +59,11 @@ pub fn SceneViewer(scan: ScanResult, flow: ScanFlow) -> impl IntoView {
     });
     on_cleanup(Viewer3d::dispose);
 
-    let points = with_commas(scan.report.view_points);
     view! {
         <div class="viewer">
             <div id=HOST_ID node_ref=host class="viewer-host"></div>
             <div class="hud hud-top">
-                <span class="chip">{format!("{points} points")}</span>
+                <span class="chip">{move || summary.get()}</span>
                 <span class="spacer"></span>
                 <button class="btn btn-ghost" on:click=move |_| Viewer3d::reset_view()>"Reset view"</button>
                 <button class="btn btn-primary" on:click=move |_| flow.home()>"New scan"</button>

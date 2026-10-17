@@ -22,12 +22,15 @@ pub struct ScanReport {
     pub view_points: u64,
     pub inference_seconds: f64,
     pub peak_vram_gb: f64,
+    pub median_depth: f64,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct ScanResult {
     pub scan_dir: String,
     pub scene_ply: String,
+    /// "splats" or "points"
+    pub kind: String,
     pub report: ScanReport,
 }
 
@@ -42,7 +45,7 @@ pub struct ScanListItem {
 #[serde(default)]
 pub struct StartupHooks {
     pub scene: Option<ScanResult>,
-    pub autoscan_video: Option<String>,
+    pub autoscan_videos: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -76,7 +79,7 @@ pub struct ProgressEvent {
 pub enum DropState {
     Idle,
     Hover,
-    Accepted(VideoInfo),
+    Accepted(Vec<VideoInfo>),
     Rejected(String),
 }
 

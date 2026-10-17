@@ -57,6 +57,11 @@ pub struct ReconstructSettings {
     pub frames: u32,
     pub conf_percentile: f32,
     pub view_points: u32,
+    /// ESRGAN-style model that sharpens the training images; empty = off.
+    pub upscale_model: String,
+    /// `brush_app` executable that trains the Gaussian splat; empty = point cloud only.
+    pub brush: String,
+    pub train_steps: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

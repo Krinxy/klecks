@@ -3,8 +3,8 @@
 Film your room with a phone, get a walkable 3D copy and a floor plan, then find out what fits
 in that corner. Offline, GPU-only, one program for Windows and Linux.
 
-> Status: **first working pipeline.** Drop a video, the app reconstructs the room as a 3D point
-> cloud on your GPU and you can fly through it. The reconstruction currently runs through the
+> Status: **working pipeline.** Drop one or several videos of a room, the app reconstructs a 3D
+> Gaussian splat on your GPU and you can look around in it. The reconstruction currently runs through the
 > Python lab (dev only, see [Reconstruction backend](#reconstruction-backend)); splats, floor plan
 > and the fit tool are next, see [Roadmap](#roadmap).
 
@@ -28,8 +28,10 @@ phone video ──► frames ──► camera poses ──► 3D Gaussian Splatt
 ## Reconstruction backend
 
 `Reconstructor` (core/reconstruct) is a trait; today's implementation `PythonLabReconstructor`
-starts `lab/vggt_try.py` (VGGT-1B: camera poses + depth, then a point cloud) in the conda lab and
-reads its progress. **This is a dev bridge and can't be shipped** (it needs a Python environment);
+runs two stages: `lab/room_scan.py` in the conda lab (VGGT-1B estimates cameras and depth for the frames
+of **all videos at once**, so several films of one room become one scene, and writes a COLMAP dataset), then
+[Brush](https://github.com/ArthurBrussee/brush) trains a **Gaussian splat** on it (about 10 minutes for
+30,000 steps). Progress and cancelling are shared across both. **This is a dev bridge and can't be shipped** (it needs a Python environment);
 an ONNX model run from Rust replaces it. Set it up once with a machine-specific override that stays
 out of git, `%APPDATA%\klecks\pipeline.yaml`:
 
@@ -38,15 +40,16 @@ pipeline:
   reconstruct:
     python: "D:/Projects/klecks-lab/python.exe"   # conda env from lab/environment-cuda.yml
     hf_home: "D:/Models/huggingface"                # where the 5 GB of weights are cached
+    brush: "D:/Projects/tools/brush/brush_app.exe"  # empty = skip the splat, show the point cloud only
 ```
 
 Scans go to `paths.scans_dir` (override it the same way in `klecks.yaml`; each scan is ~100 MB).
 The first scan downloads the weights (CC-BY-NC-4.0, non-commercial). Without this setup the app
 still starts and says what is missing.
 
-Without the GUI: `cargo run -p klecks-reconstruct --example scan -- media/clip.mp4 [cancel-after-s]`.
+Without the GUI: `cargo run -p klecks-reconstruct --example scan -- media/a.mp4 media/b.mp4 [--cancel-after 20]`.
 Developer shortcuts: `KLECKS_OPEN_SCENE=<scan folder>` opens the viewer on start,
-`KLECKS_AUTOSCAN=<video>` starts a scan on start.
+`KLECKS_AUTOSCAN=<video>;<video>` starts a scan on start.
 
 ## Layout
 

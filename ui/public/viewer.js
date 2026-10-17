@@ -3,12 +3,15 @@
 // Contributors: Krinxy <dominic.bechtold@icloud.com>
 // Last modified: 2026-10-17
 // ---
-// 3D point-cloud viewer used by the Rust/Leptos UI via `window.klecksViewer`.
-// Three.js is vendored (ui/public/vendor) because the app runs offline.
+// 3D scene viewer used by the Rust/Leptos UI via `window.klecksViewer`.
+// Shows either a coloured point cloud (scene.ply from room_scan) or a trained Gaussian splat
+// (splat.ply from Brush); the file type is detected from the header.
+// Three.js and Spark (splat renderer) are vendored (ui/public/vendor) because the app runs offline.
 //
 // Controls: drag = look around, right/middle drag = pan, wheel = zoom,
 //           W A S D = walk, Q / E = down / up, Shift = faster, double click = reset.
 import * as THREE from "./vendor/three.module.min.js";
+import { SparkRenderer, SplatMesh } from "./vendor/spark.module.min.js";
 
 const RECORD_BYTES = 15; // float32 x,y,z + uint8 r,g,b (see lab/vggt_try.py write_ply)
 const MAX_PITCH = 1.5;
@@ -33,6 +36,8 @@ class KlecksViewer {
     host.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
+    this.spark = new SparkRenderer({ renderer: this.renderer });
+    this.scene.add(this.spark);
     this.camera = new THREE.PerspectiveCamera(62, 1, 0.01, 500);
     this.pivot = new THREE.Vector3(0, 0, -1);
     this.radius = 1;
@@ -49,18 +54,49 @@ class KlecksViewer {
     return true;
   }
 
-  /** Downloads a .ply written by the reconstruction and shows it. Resolves to { points }. */
-  async load(url) {
+  /**
+   * Downloads a .ply written by the reconstruction and shows it.
+   * `sceneScale` is the typical distance of surfaces from the filming position (from the scan report);
+   * the viewer uses it to size the first view and the walking speed. Resolves to { kind, count }.
+   */
+  async load(url, sceneScale) {
     if (!this.renderer) throw new Error("viewer is not mounted");
     const response = await fetch(url);
     if (!response.ok) throw new Error(`Could not read the scene (HTTP ${response.status}).`);
-    const { positions, colors, count } = this.#parse(await response.arrayBuffer());
+    const buffer = await response.arrayBuffer();
+    this.#clear();
+    const header = new TextDecoder("ascii").decode(new Uint8Array(buffer, 0, Math.min(buffer.byteLength, 2048)));
+    if (header.includes("f_dc_0")) return this.#showSplats(buffer, sceneScale);
+    return this.#showPoints(buffer);
+  }
 
+  #clear() {
     if (this.cloud) {
       this.scene.remove(this.cloud);
       this.cloud.geometry.dispose();
       this.cloud.material.dispose();
+      this.cloud = null;
     }
+    if (this.splats) {
+      this.scene.remove(this.splats);
+      this.splats.dispose?.();
+      this.splats = null;
+    }
+  }
+
+  async #showSplats(buffer, sceneScale) {
+    const splats = new SplatMesh({ fileBytes: new Uint8Array(buffer), fileName: "scene.ply" });
+    await splats.initialized;
+    splats.rotation.x = Math.PI; // the model's y axis points down; flip so up is up
+    this.scene.add(splats);
+    this.splats = splats;
+    this.scale = Math.max(Number(sceneScale) || 0.7, 0.05);
+    this.resetView();
+    return { kind: "splats", count: splats.numSplats ?? 0 };
+  }
+
+  #showPoints(buffer) {
+    const { positions, colors, count } = this.#parse(buffer);
     // Typical distance of the points from the filming position sets the size of everything else.
     let sum = 0;
     for (let i = 0; i < count; i += 7) sum += Math.hypot(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
@@ -76,7 +112,17 @@ class KlecksViewer {
     this.scene.add(this.cloud);
 
     this.resetView();
-    return { points: count };
+    return { kind: "points", count };
+  }
+
+  /** Moves the camera: yaw/pitch in radians, radius and pivot ([x, y, z]) in scene units. */
+  setView({ yaw, pitch, radius, pivot } = {}) {
+    if (!this.renderer) return;
+    if (yaw !== undefined) this.yaw = yaw;
+    if (pitch !== undefined) this.pitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, pitch));
+    if (radius !== undefined) this.radius = radius;
+    if (pivot) this.pivot.set(pivot[0], pivot[1], pivot[2]);
+    this.#apply();
   }
 
   /** Back to the position the video was filmed from. */
@@ -95,11 +141,7 @@ class KlecksViewer {
     this.listeners = [];
     this.keys.clear();
     this.resizeObserver?.disconnect();
-    if (this.cloud) {
-      this.cloud.geometry.dispose();
-      this.cloud.material.dispose();
-      this.cloud = null;
-    }
+    if (this.scene) this.#clear();
     if (this.renderer) {
       this.renderer.dispose();
       this.renderer.domElement.remove();
@@ -220,7 +262,8 @@ class KlecksViewer {
     if (!this.renderer) return;
     this.#walk(Math.min((now - this.last) / 1000, 0.1));
     this.last = now;
-    if (this.dirty) {
+    // Splats are sorted asynchronously, so they keep rendering; a point cloud only when something changed.
+    if (this.dirty || this.splats) {
       this.renderer.render(this.scene, this.camera);
       this.dirty = false;
     }

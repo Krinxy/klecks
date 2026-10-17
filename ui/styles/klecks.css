@@ -102,19 +102,18 @@ html, body {
 .splat {
   position: absolute;
   border-radius: 50%;
-  filter: blur(56px);
   opacity: 0.36;
-  mix-blend-mode: screen;
+  background: radial-gradient(closest-side, var(--c), transparent);
   will-change: transform;
   transition: scale 900ms var(--ease), opacity 700ms ease;
   animation: drift var(--t, 40s) ease-in-out infinite alternate;
 }
-.s1 { width: 560px; height: 300px; left: 12%; top: 14%; background: var(--moss);  --t: 44s; --dx: 70px;  --dy: 36px;  --r: -14deg; }
-.s2 { width: 420px; height: 240px; left: 52%; top: 8%;  background: var(--sage);  --t: 38s; --dx: -60px; --dy: 50px;  --r: 20deg; opacity: 0.32; }
-.s3 { width: 480px; height: 280px; left: 60%; top: 46%; background: var(--olive); --t: 50s; --dx: -80px; --dy: -30px; --r: -8deg; }
-.s4 { width: 380px; height: 210px; left: 6%;  top: 54%; background: var(--sage);  --t: 46s; --dx: 50px;  --dy: -44px; --r: 12deg; opacity: 0.28; }
-.s5 { width: 300px; height: 300px; left: 38%; top: 60%; background: var(--moss);  --t: 36s; --dx: 36px;  --dy: -60px; --r: 0deg; opacity: 0.4; }
-.s6 { width: 240px; height: 140px; left: 30%; top: 4%;  background: var(--olive); --t: 33s; --dx: 40px;  --dy: 30px;  --r: 30deg; opacity: 0.36; }
+.s1 { width: 560px; height: 300px; left: 12%; top: 14%; --c: var(--moss);  --t: 44s; --dx: 70px;  --dy: 36px;  --r: -14deg; }
+.s2 { width: 420px; height: 240px; left: 52%; top: 8%;  --c: var(--sage);  --t: 38s; --dx: -60px; --dy: 50px;  --r: 20deg; opacity: 0.32; }
+.s3 { width: 480px; height: 280px; left: 60%; top: 46%; --c: var(--olive); --t: 50s; --dx: -80px; --dy: -30px; --r: -8deg; }
+.s4 { width: 380px; height: 210px; left: 6%;  top: 54%; --c: var(--sage);  --t: 46s; --dx: 50px;  --dy: -44px; --r: 12deg; opacity: 0.28; }
+.s5 { width: 300px; height: 300px; left: 38%; top: 60%; --c: var(--moss);  --t: 36s; --dx: 36px;  --dy: -60px; --r: 0deg; opacity: 0.4; }
+.s6 { width: 240px; height: 140px; left: 30%; top: 4%;  --c: var(--olive); --t: 33s; --dx: 40px;  --dy: 30px;  --r: 30deg; opacity: 0.36; }
 
 @keyframes drift {
   from { transform: translate(0, 0) rotate(var(--r, 0deg)); }
@@ -136,11 +135,9 @@ html, body {
   width: min(540px, 100%);
   padding: 44px 44px 40px;
   border-radius: 24px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.022));
+  background: linear-gradient(180deg, rgba(36, 40, 32, 0.62), rgba(14, 16, 13, 0.72));
   border: 1px solid var(--line);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 30px 80px rgba(0, 0, 0, 0.55);
-  -webkit-backdrop-filter: blur(22px) saturate(140%);
-  backdrop-filter: blur(22px) saturate(140%);
   transition: border-color 300ms ease, box-shadow 300ms ease;
 }
 .stage.is-hover .card { border-color: rgba(165, 180, 151, 0.6); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 0 0 4px rgba(165, 180, 151, 0.12), 0 30px 80px rgba(0, 0, 0, 0.55); }
@@ -203,7 +200,8 @@ html, body {
 .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 10px currentColor; }
 
 /* ── progress ──────────────────────────────────────────────── */
-.stage.is-busy .splat { opacity: 0.55; animation-duration: calc(var(--t, 40s) * 0.45); }
+/* While a scan runs the GPU belongs to the reconstruction: the glow stays, but stops drifting. */
+.stage.is-busy .splat { opacity: 0.55; animation-play-state: paused; }
 
 .steps { list-style: none; padding: 0; margin: 28px 0 0; display: grid; gap: 13px; }
 .step { display: flex; align-items: center; gap: 12px; color: var(--text-faint); transition: color 300ms ease; }

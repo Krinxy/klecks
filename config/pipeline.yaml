@@ -1,18 +1,22 @@
 # Reconstruction quality. Pick a preset with `preset`, tune single values under `presets`.
 
 pipeline:
-  # Temporary reconstruction backend: runs lab/vggt_try.py in the conda lab (dev only, not shippable).
+  # Temporary reconstruction backend: runs lab/room_scan.py in the conda lab, then trains a Gaussian
+  # splat with Brush (dev only, not shippable).
   # Machine-specific paths belong in your override file, not here:
   #   %APPDATA%\klecks\pipeline.yaml  ->  pipeline: { reconstruct: { python: "D:/Projects/klecks-lab/python.exe", ... } }
   # Later replaced by an ONNX model run from Rust (backend: onnx).
   reconstruct:
     backend: python_lab
     python: ""              # python.exe of the lab env; empty = backend not configured
-    script: ""              # path to lab/vggt_try.py; empty = ../lab/vggt_try.py next to config/
+    script: ""              # path to lab/room_scan.py; empty = lab/room_scan.py next to or above config/
     hf_home: ""             # where model weights are cached; empty = inherit HF_HOME
-    frames: 32              # frames sampled from the video (VRAM: ~11 GB at 32)
+    frames: 72              # frames shared across all videos (VRAM: ~13.5 GB at 72)
     conf_percentile: 40.0   # drop the least confident N percent of points
-    view_points: 1200000    # size of the downsampled cloud shown in the viewer
+    view_points: 3000000    # size of the downsampled point cloud (used when no splat is trained)
+    upscale_model: ""       # e.g. 4x-UltraSharp.safetensors: sharpens the training images; empty = off
+    brush: ""               # path to brush_app.exe (Gaussian splat trainer); empty = point cloud only
+    train_steps: 30000      # splat training steps (about 8-10 minutes on an RTX 4080)
 
   preset: high
   presets:

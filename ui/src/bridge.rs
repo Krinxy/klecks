@@ -23,7 +23,7 @@ extern "C" {
     fn viewer_mount(id: &str) -> bool;
 
     #[wasm_bindgen(js_namespace = ["window", "klecksViewer"], catch, js_name = load)]
-    async fn viewer_load(url: &str) -> Result<JsValue, JsValue>;
+    async fn viewer_load(url: &str, scene_scale: f64) -> Result<JsValue, JsValue>;
 
     #[wasm_bindgen(js_namespace = ["window", "klecksViewer"], js_name = resetView)]
     fn viewer_reset_view();
@@ -50,10 +50,14 @@ impl TauriBridge {
         invoke_raw(command, args).await.map(|_| ()).map_err(Self::describe)
     }
 
-    /// Builds `{ key: value }` for a command argument.
-    pub fn arg(key: &str, value: &str) -> JsValue {
+    /// Builds `{ key: [value, ...] }` for a command argument that is a list of strings.
+    pub fn args(key: &str, values: &[String]) -> JsValue {
+        let list = js_sys::Array::new();
+        for value in values {
+            list.push(&value.into());
+        }
         let object = js_sys::Object::new();
-        let _ = js_sys::Reflect::set(&object, &key.into(), &value.into());
+        let _ = js_sys::Reflect::set(&object, &key.into(), &list);
         object.into()
     }
 
@@ -75,7 +79,14 @@ impl TauriBridge {
     }
 }
 
-/// The 3D point-cloud viewer (three.js, see ui/public/viewer.js).
+/// What the viewer ended up showing.
+pub struct LoadedScene {
+    /// "splats" or "points"
+    pub kind: String,
+    pub count: u64,
+}
+
+/// The 3D scene viewer (three.js + Spark, see ui/public/viewer.js).
 pub struct Viewer3d;
 
 impl Viewer3d {
@@ -83,17 +94,22 @@ impl Viewer3d {
         viewer_mount(element_id)
     }
 
-    /// Loads a scene file from disk through Tauri's asset protocol.
-    pub async fn load(path: &str) -> Result<(), String> {
-        viewer_load(&convert_file_src(path))
+    /// Loads a scene file from disk through Tauri's asset protocol. `scene_scale` is the typical
+    /// surface distance from the filming position (0 = let the viewer guess).
+    pub async fn load(path: &str, scene_scale: f64) -> Result<LoadedScene, String> {
+        let loaded = viewer_load(&convert_file_src(path), scene_scale)
             .await
-            .map(|_| ())
             .map_err(|error| {
                 js_sys::Reflect::get(&error, &"message".into())
                     .ok()
                     .and_then(|message| message.as_string())
                     .unwrap_or_else(|| format!("{error:?}"))
-            })
+            })?;
+        let field = |name: &str| js_sys::Reflect::get(&loaded, &name.into()).unwrap_or(JsValue::UNDEFINED);
+        Ok(LoadedScene {
+            kind: field("kind").as_string().unwrap_or_default(),
+            count: field("count").as_f64().unwrap_or(0.0) as u64,
+        })
     }
 
     pub fn reset_view() {

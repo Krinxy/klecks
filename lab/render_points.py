@@ -3,7 +3,7 @@
 # Contributors: Krinxy <dominic.bechtold@icloud.com>
 # Last modified: 2026-10-17
 # ---
-"""Renders a point cloud (.ply from vggt_try.py) from novel viewpoints into one PNG.
+"""Renders a point cloud (.ply from room_scan.py) from novel viewpoints into one PNG.
 
 The first camera sits at the origin looking along +z (VGGT's world frame). Views away from
 that camera show whether the estimated depth is plausible. Pure numpy + OpenCV, CPU-only

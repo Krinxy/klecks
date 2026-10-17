@@ -15,11 +15,11 @@ const OPEN_SCENE_ENV: &str = "KLECKS_OPEN_SCENE";
 const AUTOSCAN_ENV: &str = "KLECKS_AUTOSCAN";
 
 /// Developer shortcuts so the GUI can be checked without clicking:
-/// `KLECKS_OPEN_SCENE=<scan dir>` opens the viewer, `KLECKS_AUTOSCAN=<video>` starts a scan.
+/// `KLECKS_OPEN_SCENE=<scan dir>` opens the viewer, `KLECKS_AUTOSCAN=<video>;<video>...` starts a scan.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct StartupHooks {
     pub scene: Option<ScanResult>,
-    pub autoscan_video: Option<String>,
+    pub autoscan_videos: Vec<String>,
 }
 
 impl StartupHooks {
@@ -27,7 +27,15 @@ impl StartupHooks {
         Self {
             scene: std::env::var_os(OPEN_SCENE_ENV)
                 .and_then(|dir| ScanResult::from_dir(Path::new(&dir))),
-            autoscan_video: std::env::var(AUTOSCAN_ENV).ok().filter(|v| !v.trim().is_empty()),
+            autoscan_videos: std::env::var(AUTOSCAN_ENV)
+                .map(|list| {
+                    list.split(';')
+                        .map(str::trim)
+                        .filter(|path| !path.is_empty())
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 }

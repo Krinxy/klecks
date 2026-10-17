@@ -16,27 +16,31 @@ pub struct ProgressEvent {
     pub message: String,
 }
 
-/// A video to reconstruct and the folder its results go to.
+/// Videos of one room and the folder their result goes to.
 #[derive(Debug, Clone)]
 pub struct ScanRequest {
-    pub video: PathBuf,
+    pub videos: Vec<PathBuf>,
     pub scan_dir: PathBuf,
 }
 
 impl ScanRequest {
-    /// Puts the scan in a fresh `<scans_dir>/<video name>-<unix time>` folder.
-    pub fn new(video: &Path, scans_dir: &Path) -> Self {
-        let stem = video
-            .file_stem()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "scan".into());
+    /// Puts the scan in a fresh `<scans_dir>/<name>-<unix time>` folder, named after the video
+    /// (or "<n>-videos" when several films of the same room are combined).
+    pub fn new(videos: &[PathBuf], scans_dir: &Path) -> Self {
+        let name = match videos {
+            [single] => single
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "scan".into()),
+            many => format!("{}-videos", many.len()),
+        };
         let seconds = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|elapsed| elapsed.as_secs())
             .unwrap_or(0);
         Self {
-            video: video.to_path_buf(),
-            scan_dir: scans_dir.join(format!("{stem}-{seconds}")),
+            videos: videos.to_vec(),
+            scan_dir: scans_dir.join(format!("{name}-{seconds}")),
         }
     }
 }
@@ -50,13 +54,27 @@ pub struct ScanReport {
     pub view_points: u64,
     pub inference_seconds: f64,
     pub peak_vram_gb: f64,
+    /// Typical distance of surfaces from the filming position (model units); sizes the first view.
+    pub median_depth: f64,
+    pub videos: Vec<String>,
+}
+
+/// What the viewer gets to look at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SceneKind {
+    /// A trained Gaussian splat (`splat.ply`): sharp, view-dependent colour.
+    Splats,
+    /// The fused point cloud (`scene.ply`): quick, rougher.
+    Points,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ScanResult {
     pub scan_dir: PathBuf,
-    /// Downsampled cloud for the viewer.
+    /// The file the viewer opens: the splat if one was trained, else the downsampled cloud.
     pub scene_ply: PathBuf,
+    pub kind: SceneKind,
     /// Full-resolution cloud for later processing.
     pub points_ply: PathBuf,
     pub report: ScanReport,
@@ -65,10 +83,15 @@ pub struct ScanResult {
 impl ScanResult {
     /// Reads a finished scan folder; used right after a run and to re-open old scans.
     pub fn from_dir(scan_dir: &Path) -> Option<Self> {
-        let scene_ply = scan_dir.join("scene.ply");
-        if !scene_ply.is_file() {
+        let splat = scan_dir.join("splat.ply");
+        let cloud = scan_dir.join("scene.ply");
+        let (scene_ply, kind) = if splat.is_file() {
+            (splat, SceneKind::Splats)
+        } else if cloud.is_file() {
+            (cloud, SceneKind::Points)
+        } else {
             return None;
-        }
+        };
         let report = std::fs::read_to_string(scan_dir.join("report.json"))
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
@@ -76,6 +99,7 @@ impl ScanResult {
         Some(Self {
             scan_dir: scan_dir.to_path_buf(),
             scene_ply,
+            kind,
             points_ply: scan_dir.join("points.ply"),
             report,
         })

@@ -19,6 +19,7 @@ dependencies:
       # Pose + depth model (weights facebook/VGGT-1B, 5 GB, licence CC-BY-NC-4.0).
       - git+https://github.com/facebookresearch/vggt.git
       - opencv-python-headless
+      - spandrel          # loads ESRGAN-style upscaling models (optional training-image sharpening)
       - einops
       - safetensors
       - huggingface_hub

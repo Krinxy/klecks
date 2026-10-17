@@ -28,8 +28,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_status,
-            commands::pick_video,
-            commands::accept_video,
+            commands::pick_videos,
+            commands::accept_videos,
             commands::start_reconstruction,
             commands::cancel_reconstruction,
             commands::list_scans,

@@ -60,54 +60,69 @@ pub fn app_status(state: State<AppState>) -> AppStatus {
     }
 }
 
-/// Native file picker. Async so the dialog never blocks the main thread.
+/// Native file picker; several videos of the same room can be chosen at once.
+/// Async so the dialog never blocks the main thread.
 #[tauri::command]
-pub async fn pick_video(
+pub async fn pick_videos(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-) -> Result<Option<String>, String> {
+) -> Result<Vec<String>, String> {
     let extensions = allowed_extensions(&state);
     let extension_refs: Vec<&str> = extensions.iter().map(String::as_str).collect();
     let picked = app
         .dialog()
         .file()
         .add_filter("Video", &extension_refs)
-        .blocking_pick_file();
+        .blocking_pick_files();
     Ok(picked
-        .and_then(|file| file.into_path().ok())
-        .map(|path| path.to_string_lossy().into_owned()))
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|file| file.into_path().ok())
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect())
 }
 
-/// Validates a video chosen via dialog or drag and drop.
+/// Validates what was chosen or dropped: video files, or folders (their videos are used).
 #[tauri::command]
-pub fn accept_video(path: String, state: State<AppState>) -> Result<VideoInfo, String> {
-    let file = Path::new(&path);
+pub fn accept_videos(paths: Vec<String>, state: State<AppState>) -> Result<Vec<VideoInfo>, String> {
     let extensions = allowed_extensions(&state);
-    let has_allowed_extension = file
-        .extension()
-        .map(|ext| ext.to_string_lossy().to_ascii_lowercase())
-        .is_some_and(|ext| extensions.contains(&ext));
-    if !has_allowed_extension {
-        return Err(format!("Not a supported video (use {}).", extensions.join(", ")));
+    let mut videos = Vec::new();
+    for path in &paths {
+        let path = Path::new(path);
+        if path.is_dir() {
+            let mut inside: Vec<PathBuf> = std::fs::read_dir(path)
+                .map_err(|error| format!("Cannot read the folder: {error}"))?
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|file| file.is_file() && has_extension(file, &extensions))
+                .collect();
+            inside.sort();
+            videos.extend(inside);
+        } else if has_extension(path, &extensions) && path.is_file() {
+            videos.push(path.to_path_buf());
+        }
     }
-    let metadata = std::fs::metadata(file).map_err(|error| format!("Cannot read the file: {error}"))?;
-    if !metadata.is_file() {
-        return Err("That is a folder, not a video file.".into());
+    videos.dedup();
+    if videos.is_empty() {
+        return Err(format!("No supported video found (use {}).", extensions.join(", ")));
     }
-    Ok(VideoInfo {
-        name: file
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default(),
-        size_mb: metadata.len() as f64 / (1024.0 * 1024.0),
-        path,
-    })
+    videos
+        .into_iter()
+        .map(|file| {
+            let metadata = std::fs::metadata(&file).map_err(|error| format!("Cannot read the file: {error}"))?;
+            Ok(VideoInfo {
+                name: file.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default(),
+                size_mb: metadata.len() as f64 / (1024.0 * 1024.0),
+                path: file.to_string_lossy().into_owned(),
+            })
+        })
+        .collect()
 }
 
 /// Starts a reconstruction in the background. Progress arrives as events:
 /// `reconstruct://progress`, then one of `reconstruct://done`, `://failed`, `://cancelled`.
 #[tauri::command]
-pub fn start_reconstruction(app: tauri::AppHandle, path: String) -> Result<(), String> {
+pub fn start_reconstruction(app: tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
     let (reconstructor, scans_dir, token) = {
         let state = app.state::<AppState>();
         // The GPU rule is checked here as well as inside the backend: never ML without a GPU.
@@ -128,7 +143,8 @@ pub fn start_reconstruction(app: tauri::AppHandle, path: String) -> Result<(), S
         (reconstructor, scans_dir, token)
     };
 
-    let request = ScanRequest::new(Path::new(&path), &scans_dir);
+    let videos: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+    let request = ScanRequest::new(&videos, &scans_dir);
     std::thread::spawn(move || {
         let outcome = reconstructor.run(&request, &token, &mut |event| {
             let _ = app.emit("reconstruct://progress", event);
@@ -216,6 +232,12 @@ pub fn window_toggle_maximize(window: WebviewWindow) -> Result<(), String> {
 #[tauri::command]
 pub fn window_close(window: WebviewWindow) -> Result<(), String> {
     window.close().map_err(|error| error.to_string())
+}
+
+fn has_extension(file: &Path, extensions: &[String]) -> bool {
+    file.extension()
+        .map(|ext| ext.to_string_lossy().to_ascii_lowercase())
+        .is_some_and(|ext| extensions.contains(&ext))
 }
 
 fn allowed_extensions(state: &AppState) -> Vec<String> {

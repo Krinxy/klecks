@@ -22,10 +22,18 @@ fn dropped_paths(event: &JsValue) -> Vec<String> {
         .collect()
 }
 
-async fn validate(path: String, state: RwSignal<DropState>) {
-    match TauriBridge::call::<VideoInfo>("accept_video", TauriBridge::arg("path", &path)).await {
-        Ok(video) => state.set(DropState::Accepted(video)),
+async fn validate(paths: Vec<String>, state: RwSignal<DropState>) {
+    match TauriBridge::call::<Vec<VideoInfo>>("accept_videos", TauriBridge::args("paths", &paths)).await {
+        Ok(videos) => state.set(DropState::Accepted(videos)),
         Err(message) => state.set(DropState::Rejected(message)),
+    }
+}
+
+/// "IMG_7695.MP4" for one video, "5 videos" for several.
+fn label(videos: &[VideoInfo]) -> String {
+    match videos {
+        [single] => single.name.clone(),
+        many => format!("{} videos", many.len()),
     }
 }
 
@@ -40,9 +48,11 @@ pub fn DropZone(#[prop(into)] blocker: Signal<Option<String>>, flow: ScanFlow) -
         TauriBridge::listen("tauri://drag-enter", move |_| state.set(DropState::Hover)).await;
         TauriBridge::listen("tauri://drag-leave", move |_| state.set(DropState::Idle)).await;
         TauriBridge::listen("tauri://drag-drop", move |event| {
-            match dropped_paths(&event).into_iter().next() {
-                Some(path) => leptos::task::spawn_local(validate(path, state)),
-                None => state.set(DropState::Idle),
+            let paths = dropped_paths(&event);
+            if paths.is_empty() {
+                state.set(DropState::Idle);
+            } else {
+                leptos::task::spawn_local(validate(paths, state));
             }
         })
         .await;
@@ -50,9 +60,9 @@ pub fn DropZone(#[prop(into)] blocker: Signal<Option<String>>, flow: ScanFlow) -
 
     let pick = move |_| {
         leptos::task::spawn_local(async move {
-            match TauriBridge::call::<Option<String>>("pick_video", JsValue::UNDEFINED).await {
-                Ok(Some(path)) => validate(path, state).await,
-                Ok(None) => {}
+            match TauriBridge::call::<Vec<String>>("pick_videos", JsValue::UNDEFINED).await {
+                Ok(paths) if !paths.is_empty() => validate(paths, state).await,
+                Ok(_) => {}
                 Err(message) => state.set(DropState::Rejected(message)),
             }
         });
@@ -69,42 +79,53 @@ pub fn DropZone(#[prop(into)] blocker: Signal<Option<String>>, flow: ScanFlow) -
         <Stage mood=mood>
             <div class="card">
                 {move || match state.get() {
-                    DropState::Accepted(video) => {
-                        let to_scan = video.clone();
+                    DropState::Accepted(videos) => {
+                        let title = label(&videos);
+                        let paths: Vec<String> = videos.iter().map(|video| video.path.clone()).collect();
+                        let total_mb: f64 = videos.iter().map(|video| video.size_mb).sum();
+                        let names = videos.iter().map(|video| video.name.clone()).collect::<Vec<_>>().join(", ");
+                        let scan_label = title.clone();
+                        let several = videos.len() > 1;
                         view! {
-                            <h1 class="card-title">{video.name.clone()}</h1>
-                            <p class="card-text">{format!("{:.1} MB, ready to scan.", video.size_mb)}</p>
+                            <h1 class="card-title">{title}</h1>
+                            <p class="card-text">
+                                {if several {
+                                    format!("{total_mb:.1} MB in total, all of the same room: {names}.")
+                                } else {
+                                    format!("{total_mb:.1} MB, ready to scan.")
+                                }}
+                            </p>
                             <div class="card-actions">
                                 <button
                                     class="btn btn-primary"
                                     disabled=move || blocker.get().is_some()
-                                    on:click=move |_| flow.start(to_scan.path.clone(), to_scan.name.clone())
+                                    on:click=move |_| flow.start(paths.clone(), scan_label.clone())
                                 >
                                     "Reconstruct room"
                                 </button>
-                                <button class="btn btn-ghost" on:click=pick>"Choose another"</button>
+                                <button class="btn btn-ghost" on:click=pick>"Choose other videos"</button>
                             </div>
                             {move || blocker.get().map(|reason| view! { <p class="card-note card-note-bad">{reason}</p> })}
                         }.into_any()
                     }
                     DropState::Rejected(message) => view! {
                         <h1 class="card-title">{message}</h1>
-                        <p class="card-text">"Drop another video or choose one from your computer."</p>
+                        <p class="card-text">"Drop other videos or choose them from your computer."</p>
                         <div class="card-actions">
-                            <button class="btn btn-primary" on:click=pick>"Choose video"</button>
+                            <button class="btn btn-primary" on:click=pick>"Choose videos"</button>
                         </div>
                     }.into_any(),
                     DropState::Hover => view! {
                         <h1 class="card-title">"Release to load it"</h1>
-                        <p class="card-text">"Drop the video anywhere in this window."</p>
+                        <p class="card-text">"Drop the videos anywhere in this window."</p>
                     }.into_any(),
                     DropState::Idle => view! {
-                        <h1 class="card-title">"Drop a video of your room"</h1>
+                        <h1 class="card-title">"Drop videos of your room"</h1>
                         <p class="card-text">
-                            "Walk slowly through the room, then drop the file here. mp4, mov, mkv, webm and avi work."
+                            "Films of the same room belong together: drop several files or a whole folder and they become one scene. mp4, mov, mkv, webm and avi work."
                         </p>
                         <div class="card-actions">
-                            <button class="btn btn-primary" on:click=pick>"Choose video"</button>
+                            <button class="btn btn-primary" on:click=pick>"Choose videos"</button>
                         </div>
                         <RecentScans flow=flow />
                     }.into_any(),

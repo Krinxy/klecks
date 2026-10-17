@@ -30,9 +30,9 @@ pub fn App() -> impl IntoView {
                 status.set(Some(loaded));
                 if let Some(scene) = hooks.scene {
                     flow.show(scene);
-                } else if let Some(video) = hooks.autoscan_video {
-                    let name = video.rsplit(['\\', '/']).next().unwrap_or("video").to_string();
-                    flow.start(video, name);
+                } else if !hooks.autoscan_videos.is_empty() {
+                    let label = format!("{} videos", hooks.autoscan_videos.len());
+                    flow.start(hooks.autoscan_videos, label);
                 }
             }
             Err(error) => leptos::logging::error!("app_status failed: {error}"),

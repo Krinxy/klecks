@@ -9,14 +9,16 @@ use crate::components::stage::Stage;
 use crate::flow::ScanFlow;
 
 /// (stage key sent by the backend, what the person reads)
-const STEPS: [(&str, &str); 4] = [
+const STEPS: [(&str, &str); 6] = [
     ("frames", "Preparing frames"),
     ("model", "Loading the model"),
     ("inference", "Estimating cameras and depth"),
-    ("cloud", "Building the 3D scene"),
+    ("detail", "Sharpening the details"),
+    ("cloud", "Preparing the training"),
+    ("train", "Training the 3D scene"),
 ];
 
-/// Shown while a scan runs: the four steps, a bar, and a way out.
+/// Shown while a scan runs: the steps, a bar, and a way out.
 #[component]
 pub fn ScanProgress(name: String, flow: ScanFlow) -> impl IntoView {
     // "done" is past the last step so every step shows as finished.

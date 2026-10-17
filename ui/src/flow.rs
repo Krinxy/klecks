@@ -50,11 +50,14 @@ impl ScanFlow {
         TauriBridge::listen("reconstruct://cancelled", move |_| self.view.set(View::Welcome)).await;
     }
 
-    pub fn start(self, path: String, name: String) {
+    /// `label` is what the progress screen calls this scan ("IMG_7695.MP4", "5 videos").
+    pub fn start(self, paths: Vec<String>, label: String) {
         self.progress.set(None);
-        self.view.set(View::Scanning(name));
+        self.view.set(View::Scanning(label));
         leptos::task::spawn_local(async move {
-            if let Err(message) = TauriBridge::fire_with("start_reconstruction", TauriBridge::arg("path", &path)).await {
+            if let Err(message) =
+                TauriBridge::fire_with("start_reconstruction", TauriBridge::args("paths", &paths)).await
+            {
                 self.view.set(View::Failed(message));
             }
         });
