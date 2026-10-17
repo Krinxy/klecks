@@ -7,6 +7,16 @@
 # Local state — never commit
 /models/
 /scans/
+/media/
+
+# Test footage (any folder, any case)
+*.mp4
+*.MP4
+*.mov
+*.MOV
+*.mkv
+*.webm
+*.avi
 .env
 *.local.yaml
 .claude/
