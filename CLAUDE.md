@@ -52,3 +52,8 @@ When running the built exe from a target dir, set `KLECKS_CONFIG_DIR`.
 - DirectML is in maintenance and ROCm is deprecated in ONNX Runtime; prefer WinML / MIGraphX
   for AMD when that work starts.
 - Brush is still a proof of concept; phase 0 verifies it before anything depends on it.
+- Phone videos carry a rotation tag (`rotation=-90`) that OpenCV ignores: always rotate frames
+  explicitly when extracting (see `lab/vggt_try.py`), or models get sideways images.
+- VGGT weights are CC-BY-NC-4.0 (non-commercial). Keep that in mind before distributing klecks.
+- Lab env lives at `D:\Projects\klecks-lab` (conda `-p`), run outputs in `D:\Projects\klecks-runs`;
+  test videos in `media/` are git-ignored.
