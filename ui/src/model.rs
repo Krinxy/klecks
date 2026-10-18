@@ -80,14 +80,54 @@ pub struct VideoShare {
     pub index: Option<usize>,
 }
 
-/// Top-down plan of a scanned room: a density grid and where the cameras walked.
+/// How much of the room one film saw, as estimated from the camera positions.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct VideoScore {
+    pub frames: u32,
+    /// Cells of the footprint this film saw.
+    pub seen: u32,
+    /// Cells only this film saw.
+    pub unique: u32,
+}
+
+/// The largest part of the footprint that few frames saw.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct Thin {
+    pub share_pct: u32,
+    /// Centre of the part, 0 to 1 from the left and from the top of the plan.
+    pub x: f64,
+    pub y: f64,
+}
+
+/// Top-down plan of a scanned room: a density grid, where the cameras walked and how well each part is seen.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct Plan {
     pub width: u32,
     pub height: u32,
     pub cells: Vec<Vec<u32>>,
     /// `[x, y, video, heading_x, heading_y]` in grid cells.
     pub cameras: Vec<[f64; 5]>,
+    /// Frames that saw each cell (0 outside the footprint, capped at 9).
+    pub seen: Vec<Vec<u32>>,
+    pub videos: Vec<VideoScore>,
+    pub footprint: u32,
+    pub covered_pct: u32,
+    pub thin: Option<Thin>,
+}
+
+/// One scan folder of a room, finished or stopped.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct ScanEntry {
+    pub name: String,
+    pub modified_ms: u64,
+    /// "splats", "points" or "unfinished"
+    pub state: String,
+    pub frames: u32,
+    pub seconds: u32,
+    pub scan: Option<ScanResult>,
+    pub note: String,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -97,6 +137,7 @@ pub struct RoomOverview {
     pub videos: Vec<VideoShare>,
     pub frames: u32,
     pub plan: Option<Plan>,
+    pub history: Vec<ScanEntry>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
@@ -115,6 +156,7 @@ pub struct Asset {
     pub size: Option<AssetSize>,
     pub notes: String,
     pub source_url: String,
+    pub tags: Vec<String>,
     pub images: Vec<String>,
 }
 

@@ -14,6 +14,14 @@ use crate::model::{ProgressEvent, ScanResult, View};
 pub struct ScanFlow {
     pub view: RwSignal<View>,
     pub progress: RwSignal<Option<ProgressEvent>>,
+    last: RwSignal<Option<Attempt>>,
+}
+
+/// What was started last, so "Try again" can start it once more.
+#[derive(Clone)]
+enum Attempt {
+    Videos(Vec<String>, String),
+    Room(String, String),
 }
 
 impl ScanFlow {
@@ -21,6 +29,7 @@ impl ScanFlow {
         Self {
             view: RwSignal::new(View::Menu),
             progress: RwSignal::new(None),
+            last: RwSignal::new(None),
         }
     }
 
@@ -49,6 +58,7 @@ impl ScanFlow {
 
     /// `label` is what the progress screen calls this scan ("IMG_7695.MP4", "5 videos").
     pub fn start(self, paths: Vec<String>, label: String) {
+        self.last.set(Some(Attempt::Videos(paths.clone(), label.clone())));
         self.progress.set(None);
         self.view.set(View::Scanning(label));
         leptos::task::spawn_local(async move {
@@ -68,6 +78,7 @@ impl ScanFlow {
 
     /// Reconstructs every video in a room of the library.
     pub fn scan_room(self, room_id: String, label: String) {
+        self.last.set(Some(Attempt::Room(room_id.clone(), label.clone())));
         self.progress.set(None);
         self.view.set(View::Scanning(label));
         leptos::task::spawn_local(async move {
@@ -77,6 +88,20 @@ impl ScanFlow {
                 self.view.set(View::Failed(message));
             }
         });
+    }
+
+    /// True when there is something to try again.
+    pub fn can_retry(self) -> bool {
+        self.last.get().is_some()
+    }
+
+    /// Starts the last scan once more.
+    pub fn retry(self) {
+        match self.last.get_untracked() {
+            Some(Attempt::Videos(paths, label)) => self.start(paths, label),
+            Some(Attempt::Room(id, label)) => self.scan_room(id, label),
+            None => self.home(),
+        }
     }
 
     pub fn show(self, scan: ScanResult) {

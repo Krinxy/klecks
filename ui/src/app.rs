@@ -32,7 +32,7 @@ pub fn App() -> impl IntoView {
                 if let Some(scene) = hooks.scene {
                     flow.show(scene);
                 } else if !hooks.autoscan_videos.is_empty() {
-                    let label = format!("{} videos", hooks.autoscan_videos.len());
+                    let label = crate::format::count_of(hooks.autoscan_videos.len(), "video", "videos");
                     flow.start(hooks.autoscan_videos, label);
                 }
             }
@@ -81,11 +81,14 @@ pub fn App() -> impl IntoView {
                     View::Viewing(scan) => view! { <SceneViewer scan=scan flow=flow /> }.into_any(),
                     View::Failed(message) => view! {
                         <Stage mood="is-rejected">
-                            <div class="card">
-                                <h1 class="card-title">"The scan didn't finish"</h1>
-                                <p class="card-text card-error">{message}</p>
-                                <div class="card-actions">
-                                    <button class="btn btn-primary" on:click=move |_| flow.home()>"Back"</button>
+                            <div class="plate drop">
+                                <h1 class="drop-title">"The scan did not finish"</h1>
+                                <p class="drop-text card-error">{message}</p>
+                                <div class="drop-actions">
+                                    {flow.can_retry().then(|| view! {
+                                        <button class="btn btn-primary" on:click=move |_| flow.retry()>"Try again"</button>
+                                    })}
+                                    <button class="btn btn-ghost" on:click=move |_| flow.home()>"Back to the menu"</button>
                                 </div>
                             </div>
                         </Stage>

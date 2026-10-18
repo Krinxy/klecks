@@ -1,7 +1,7 @@
 // ---
 // Owner: Krinxy <dominic.bechtold@icloud.com>
 // Contributors: Krinxy <dominic.bechtold@icloud.com>
-// Last modified: 2026-10-17
+// Last modified: 2026-10-18
 // ---
 use leptos::prelude::*;
 
@@ -17,45 +17,42 @@ const STEPS: [(&str, &str); 5] = [
     ("train", "Training the 3D scene"),
 ];
 
-/// Shown while a scan runs: the steps, a bar, and a way out.
+/// Shown while a scan runs: the steps as slabs on the left, the percentage on the right, and a way out.
 #[component]
 pub fn ScanProgress(name: String, flow: ScanFlow) -> impl IntoView {
     // "done" is past the last step so every step shows as finished.
     let current = move || {
         flow.progress
             .get()
-            .map(|event| {
-                STEPS
-                    .iter()
-                    .position(|(key, _)| *key == event.stage)
-                    .unwrap_or(STEPS.len())
-            })
+            .map(|event| STEPS.iter().position(|(key, _)| *key == event.stage).unwrap_or(STEPS.len()))
             .unwrap_or(0)
     };
     let percent = move || flow.progress.get().map(|event| event.pct).unwrap_or(0);
 
     view! {
         <Stage mood="is-busy">
-            <div class="card">
-                <h1 class="card-title">"Reconstructing your room"</h1>
-                <p class="card-text">{name}</p>
+            <div class="progress">
                 <ol class="steps">
                     {STEPS
                         .iter()
                         .enumerate()
                         .map(|(index, (_, label))| view! {
-                            <li class="step" class:is-done=move || index < current() class:is-current=move || index == current()>
-                                <i class="step-dot"></i>
-                                <span>{*label}</span>
+                            <li class="slab slab-step" class:is-done=move || index < current() class:is-selected=move || index == current()>
+                                <span>
+                                    <span class="slab-label">{*label}</span>
+                                    <span class="slab-detail">{move || if index < current() { "done" } else { "" }}</span>
+                                </span>
                             </li>
                         })
                         .collect_view()}
                 </ol>
-                <div class="bar"><span style=move || format!("width: {}%", percent())></span></div>
-                <p class="card-note">
-                    {move || flow.progress.get().map(|event| event.message).unwrap_or_else(|| "Starting…".into())}
-                </p>
-                <div class="card-actions">
+                <div class="plate progress-side">
+                    <p class="progress-room">{name}</p>
+                    <p class="progress-number">{move || format!("{}", percent())}<span>"%"</span></p>
+                    <div class="bar"><span style=move || format!("width: {}%", percent())></span></div>
+                    <p class="progress-note">
+                        {move || flow.progress.get().map(|event| event.message).unwrap_or_else(|| "Starting…".into())}
+                    </p>
                     <button class="btn btn-ghost" on:click=move |_| flow.cancel()>"Cancel"</button>
                 </div>
             </div>

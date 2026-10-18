@@ -10,13 +10,15 @@ use crate::components::scene_viewer::SceneViewer;
 use crate::components::stage::Stage;
 use crate::flow::ScanFlow;
 use crate::format::{count_of, when};
-use crate::model::{Plan, RoomOverview, VideoShare, View};
+use crate::model::{Plan, RoomOverview, Thin, VideoScore, VideoShare, View};
 
 /// How many of the six density steps a cell shows (0 = empty).
 const LEVELS: u32 = 5;
 /// A heading tick every this many cameras, so the path does not turn into a hedgehog.
 const HEADING_EVERY: usize = 4;
 const HEADING_LENGTH: f64 = 1.8;
+/// Keep in step with THIN_FRAMES in lab/room_plan.py.
+const THIN_FRAMES: u32 = 4;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Pane {
@@ -71,7 +73,15 @@ fn room_body(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String>>
     let newer = data.videos.iter().filter(|video| !video.scanned).count();
     let scan_result = data.scan.as_ref().map(|scan| scan.result.clone());
     let plan = data.plan.clone();
-    let videos = data.videos.clone();
+    let mut videos = data.videos.clone();
+    let footprint = data.plan.as_ref().map(|plan| plan.footprint).unwrap_or(0);
+    let scores: Vec<VideoScore> = data.plan.as_ref().map(|plan| plan.videos.clone()).unwrap_or_default();
+    // The film that shows the most of the room first; without a plan, the one with the most frames.
+    videos.sort_by_key(|video| {
+        let seen = video.index.and_then(|index| scores.get(index)).map_or(0, |score| score.seen);
+        std::cmp::Reverse((seen, video.frames))
+    });
+    let next_best = data.plan.as_ref().and_then(|plan| plan.thin.as_ref()).map(thin_hint);
     let can_scan = move || has_videos && blocker.get().is_none();
     let scan_room = room_id.clone();
     let scan_label = room_name.clone();
@@ -117,10 +127,19 @@ fn room_body(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String>>
 
                 <section class="panel panel-media">
                     <h2 class="panel-title">"Media that built this room"</h2>
-                    <p class="panel-sub">"Frames each film gave to the scene. A film that saw parts nobody else saw is worth more."</p>
+                    <p class="panel-sub">"The bar is how much of the room a film saw. The number is what only that film saw. Both are estimates from where the camera stood."</p>
                     <ul class="media-list">
-                        {videos.into_iter().enumerate().map(|(rank, video)| media_row(video, rank)).collect_view()}
+                        {videos.into_iter().enumerate().map(|(rank, video)| {
+                            let score = video.index.and_then(|index| scores.get(index)).cloned();
+                            media_row(video, rank, score, footprint)
+                        }).collect_view()}
                     </ul>
+                    {next_best.map(|text| view! {
+                        <div class="hint-box">
+                            <h3 class="hint-title">"Next best film"</h3>
+                            <p>{text}</p>
+                        </div>
+                    })}
                     {(newer > 0).then(|| view! {
                         <p class="media-note">{format!("{} not in the scene yet. Scan again to add {}.",
                             count_of(newer, "new video is", "new videos are"), if newer == 1 { "it" } else { "them" })}</p>
@@ -132,12 +151,41 @@ fn room_body(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String>>
     }
 }
 
-fn media_row(video: VideoShare, rank: usize) -> impl IntoView {
+/// "The upper left part of the plan is seen by few frames (12% of it). A short film from there adds the most."
+fn thin_hint(thin: &Thin) -> String {
+    let across = if thin.x < 0.34 { "left" } else if thin.x > 0.66 { "right" } else { "middle" };
+    let down = if thin.y < 0.34 { "upper" } else if thin.y > 0.66 { "lower" } else { "central" };
+    let place = match (down, across) {
+        ("central", "middle") => "middle of the plan".to_string(),
+        ("central", side) => format!("{side} side of the plan"),
+        (row, "middle") => format!("{row} part of the plan"),
+        (row, side) => format!("{row} {side} part of the plan"),
+    };
+    format!(
+        "The {place} is seen by few frames ({}% of the room). A short, slow film that looks at it from a different spot adds the most.",
+        thin.share_pct
+    )
+}
+
+fn media_row(video: VideoShare, rank: usize, score: Option<VideoScore>, footprint: u32) -> impl IntoView {
     let thumb = video.thumb.as_deref().map(TauriBridge::file_url);
-    let detail = if video.scanned {
-        format!("{}, {:.0} MB", count_of(video.frames as usize, "frame", "frames"), video.size_mb)
-    } else {
+    let percent = |cells: u32| (cells * 100).checked_div(footprint).unwrap_or(0) as u8;
+    let sees = score.as_ref().map(|score| percent(score.seen));
+    let only = score.as_ref().map(|score| percent(score.unique));
+    let bar = sees.unwrap_or(video.share_pct);
+    let detail = if !video.scanned {
         format!("New, {:.0} MB", video.size_mb)
+    } else if let Some(sees) = sees {
+        format!("{}, {:.0} MB, sees {sees}% of the room", count_of(video.frames as usize, "frame", "frames"), video.size_mb)
+    } else {
+        format!("{}, {:.0} MB", count_of(video.frames as usize, "frame", "frames"), video.size_mb)
+    };
+    let number = if !video.scanned {
+        "new".to_string()
+    } else if let Some(only) = only {
+        format!("+{only}")
+    } else {
+        format!("{}%", video.share_pct)
     };
     view! {
         <li class="media-row" class:is-new=!video.scanned>
@@ -145,10 +193,10 @@ fn media_row(video: VideoShare, rank: usize) -> impl IntoView {
             <span class="media-main">
                 <span class="media-name">{video.name.clone()}</span>
                 <span class="media-detail">{detail}</span>
-                <span class="media-bar"><span style=format!("width: {}%", video.share_pct.max(if video.scanned { 2 } else { 0 }))></span></span>
+                <span class="media-bar"><span style=format!("width: {}%", bar.max(if video.scanned { 2 } else { 0 }))></span></span>
             </span>
-            <span class="media-share" class:is-top=rank == 0 && video.scanned>
-                {if video.scanned { format!("{}%", video.share_pct) } else { "new".to_string() }}
+            <span class="media-share" class:is-top=rank == 0 && video.scanned title="Share of the room only this film saw">
+                {number}
             </span>
         </li>
     }
@@ -166,6 +214,8 @@ fn plan_view(plan: Option<Plan>, scanned: bool) -> impl IntoView {
     };
     let (width, height) = (plan.width as f64, plan.height as f64);
     let cells = plan_cells(&plan);
+    let hatch = plan_thin(&plan);
+    let covered = plan.covered_pct;
     let videos = plan.cameras.iter().map(|camera| camera[2] as usize).max().map_or(0, |last| last + 1);
     let paths = (0..videos)
         .map(|video| {
@@ -195,14 +245,50 @@ fn plan_view(plan: Option<Plan>, scanned: bool) -> impl IntoView {
     view! {
         <div class="plan">
             <svg viewBox=format!("-2 -2 {} {}", width + 4.0, height + 4.0) role="img" aria-label="Floor plan seen from above">
+                <defs>
+                    <pattern id="thin-hatch" width="1.6" height="1.6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                        <line x1="0" y1="0" x2="0" y2="1.6" class="hatch-line" />
+                    </pattern>
+                </defs>
                 <rect x="-2" y="-2" width=width + 4.0 height=height + 4.0 class="plan-ground" />
                 {cells}
+                {hatch}
                 {paths}
             </svg>
-            <p class="plan-note">"The filled area is what the films saw. Lines are the way you walked, one colour per film. Doors are not detected yet."</p>
+            <p class="plan-note">
+                {format!("{covered}% is seen by enough frames. Hatched parts are seen by few. ")}
+                "Lines are the way you walked, one colour per film. Doors are not detected yet."
+            </p>
         </div>
     }
     .into_any()
+}
+
+/// Footprint cells that few frames saw, as hatched runs on top of the plan.
+fn plan_thin(plan: &Plan) -> impl IntoView {
+    let thin = |y: usize, x: usize| {
+        let inside = plan.cells.get(y).and_then(|row| row.get(x)).is_some_and(|value| *value > 0);
+        inside && plan.seen.get(y).and_then(|row| row.get(x)).is_some_and(|frames| *frames < THIN_FRAMES)
+    };
+    let mut runs = Vec::new();
+    for y in 0..plan.cells.len() {
+        let width = plan.cells[y].len();
+        let mut x = 0;
+        while x < width {
+            if thin(y, x) {
+                let start = x;
+                while x < width && thin(y, x) {
+                    x += 1;
+                }
+                runs.push((start, y, x - start));
+            } else {
+                x += 1;
+            }
+        }
+    }
+    runs.into_iter()
+        .map(|(x, y, run)| view! { <rect x=x y=y width=run height="1.02" fill="url(#thin-hatch)" /> })
+        .collect_view()
 }
 
 /// Density cells as a handful of rectangles: runs of the same level in a row become one.

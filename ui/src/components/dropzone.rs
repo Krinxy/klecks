@@ -78,7 +78,7 @@ pub fn DropZone(#[prop(into)] blocker: Signal<Option<String>>, flow: ScanFlow) -
     view! {
         <Stage mood=mood>
             <BackButton flow=flow />
-            <div class="card">
+            <div class="plate drop">
                 {move || match state.get() {
                     DropState::Accepted(videos) => {
                         let title = label(&videos);
@@ -88,15 +88,15 @@ pub fn DropZone(#[prop(into)] blocker: Signal<Option<String>>, flow: ScanFlow) -
                         let scan_label = title.clone();
                         let several = videos.len() > 1;
                         view! {
-                            <h1 class="card-title">{title}</h1>
-                            <p class="card-text">
+                            <h1 class="drop-title">{title}</h1>
+                            <p class="drop-text">
                                 {if several {
                                     format!("{total_mb:.1} MB in total, all of the same room: {names}.")
                                 } else {
                                     format!("{total_mb:.1} MB, ready to scan.")
                                 }}
                             </p>
-                            <div class="card-actions">
+                            <div class="drop-actions">
                                 <button
                                     class="btn btn-primary"
                                     disabled=move || blocker.get().is_some()
@@ -106,26 +106,26 @@ pub fn DropZone(#[prop(into)] blocker: Signal<Option<String>>, flow: ScanFlow) -
                                 </button>
                                 <button class="btn btn-ghost" on:click=pick>"Choose other videos"</button>
                             </div>
-                            {move || blocker.get().map(|reason| view! { <p class="card-note card-note-bad">{reason}</p> })}
+                            {move || blocker.get().map(|reason| view! { <p class="drop-note">{reason}</p> })}
                         }.into_any()
                     }
                     DropState::Rejected(message) => view! {
-                        <h1 class="card-title">{message}</h1>
-                        <p class="card-text">"Drop other videos or choose them from your computer."</p>
-                        <div class="card-actions">
+                        <h1 class="drop-title">{message}</h1>
+                        <p class="drop-text">"Drop other videos or choose them from your computer."</p>
+                        <div class="drop-actions">
                             <button class="btn btn-primary" on:click=pick>"Choose videos"</button>
                         </div>
                     }.into_any(),
                     DropState::Hover => view! {
-                        <h1 class="card-title">"Release to load it"</h1>
-                        <p class="card-text">"Drop the videos anywhere in this window."</p>
+                        <h1 class="drop-title">"Release to load it"</h1>
+                        <p class="drop-text">"Drop the videos anywhere in this window."</p>
                     }.into_any(),
                     DropState::Idle => view! {
-                        <h1 class="card-title">"Drop videos of your room"</h1>
-                        <p class="card-text">
+                        <h1 class="drop-title">"Drop videos of your room"</h1>
+                        <p class="drop-text">
                             "Films of the same room belong together: drop several files or a whole folder and they become one scene. mp4, mov, mkv, webm and avi work."
                         </p>
-                        <div class="card-actions">
+                        <div class="drop-actions">
                             <button class="btn btn-primary" on:click=pick>"Choose videos"</button>
                         </div>
                     }.into_any(),

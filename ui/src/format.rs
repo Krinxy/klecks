@@ -38,6 +38,16 @@ pub fn count_of(count: usize, singular: &str, plural: &str) -> String {
     format!("{count} {}", if count == 1 { singular } else { plural })
 }
 
+/// 64 -> "1:04", 3725 -> "1:02:05"
+pub fn clock(seconds: u32) -> String {
+    let (hours, minutes, rest) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{rest:02}")
+    } else {
+        format!("{minutes}:{rest:02}")
+    }
+}
+
 /// "Draft" from "draft".
 pub fn capitalised(text: &str) -> String {
     let mut chars = text.chars();

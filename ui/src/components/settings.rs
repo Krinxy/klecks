@@ -75,19 +75,19 @@ pub fn SettingsScreen(flow: ScanFlow, status: RwSignal<Option<AppStatus>>) -> im
                             view! {
                                 <li>
                                     <button
-                                        class="settings-tab"
+                                        class="slab slab-sm"
                                         role="tab"
                                         class:is-selected=move || section.get() == this
                                         on:click=move |_| { section.set(this); notice.set(None); }
                                     >
-                                        {*label}
+                                        <span><span class="slab-label">{*label}</span></span>
                                     </button>
                                 </li>
                             }
                         })
                         .collect_view()}
                 </ul>
-                <div class="settings-pane">
+                <div class="plate settings-pane">
                     {move || match settings.get() {
                         None => view! { <p class="screen-note">"Loading…"</p> }.into_any(),
                         Some(loaded) => match section.get() {
@@ -112,21 +112,21 @@ fn quality(loaded: SettingsView, settings: RwSignal<Option<SettingsView>>, notic
     view! {
         <h2 class="pane-title">"Quality"</h2>
         <p class="pane-text">"A longer training makes the scene sharper where the videos looked. It does not add what was never filmed."</p>
-        <ul class="options">
+        <ul class="tiles">
             {loaded.presets.into_iter().map(|preset: PresetView| {
                 let id = preset.id.clone();
                 let selected = preset.id == chosen;
                 view! {
                     <li>
                         <button
-                            class="option"
+                            class="tile"
                             class:is-selected=selected
                             on:click=move |_| save(settings, notice, "set_setting", "pipeline.preset".into(), id.clone())
                         >
-                            <span class="option-name">{capitalised(&preset.id)}</span>
-                            <span class="option-detail">
-                                {format!("About {} min, up to {} splats", preset.minutes, millions(preset.max_splats))}
-                            </span>
+                            <span class="tile-name">{capitalised(&preset.id)}</span>
+                            <span class="tile-big">{format!("{} min", preset.minutes)}</span>
+                            <span class="tile-detail">{format!("up to {} splats", millions(preset.max_splats))}</span>
+                            <span class="tile-detail">{format!("{} training steps", preset.train_iterations)}</span>
                         </button>
                     </li>
                 }

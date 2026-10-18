@@ -7,10 +7,11 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use klecks_library::{Asset, Library, Room};
+use klecks_reconstruct::{SceneKind, ScanResult};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
-use crate::commands::{all_scans, begin_scan, ScanListItem};
+use crate::commands::{all_scans, begin_scan, room_of_scan, ScanListItem};
 use crate::state::AppState;
 
 const MAX_LISTED_SCANS: usize = 40;
@@ -43,6 +44,20 @@ pub struct VideoShare {
     index: Option<usize>,
 }
 
+/// One scan folder of a room, finished or not, so a stopped scan can be seen and tried again.
+#[derive(Serialize)]
+pub struct ScanEntry {
+    name: String,
+    modified_ms: u64,
+    /// "splats", "points" or "unfinished"
+    state: &'static str,
+    frames: u32,
+    seconds: u32,
+    scan: Option<ScanResult>,
+    /// What the log said last, for a scan that did not finish.
+    note: String,
+}
+
 /// What a room screen shows: which films built the scene, and the top-down plan if the scan has one.
 #[derive(Serialize)]
 pub struct RoomOverview {
@@ -51,6 +66,7 @@ pub struct RoomOverview {
     videos: Vec<VideoShare>,
     frames: u32,
     plan: Option<serde_json::Value>,
+    history: Vec<ScanEntry>,
 }
 
 #[derive(Serialize)]
@@ -165,7 +181,56 @@ pub fn room_overview(state: State<AppState>, room: String) -> Result<RoomOvervie
         .collect();
     videos.sort_by_key(|video| std::cmp::Reverse(video.frames));
     let plan = read("plan.json");
-    Ok(RoomOverview { room: found, scan, videos, frames, plan })
+    let history = state.config().paths.as_ref().map(|paths| scan_history(&paths.scans, &found.id)).unwrap_or_default();
+    Ok(RoomOverview { room: found, scan, videos, frames, plan, history })
+}
+
+/// Every folder in the scans directory that belongs to a room, newest first.
+fn scan_history(scans: &std::path::Path, room: &str) -> Vec<ScanEntry> {
+    let mut entries: Vec<ScanEntry> = std::fs::read_dir(scans)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_dir())
+        .filter(|entry| room_of_scan(&entry.file_name().to_string_lossy()) == room)
+        .map(|entry| {
+            let dir = entry.path();
+            let modified_ms = entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|elapsed| elapsed.as_millis() as u64)
+                .unwrap_or(0);
+            let report: Option<serde_json::Value> =
+                std::fs::read_to_string(dir.join("report.json")).ok().and_then(|text| serde_json::from_str(&text).ok());
+            let scan = ScanResult::from_dir(&dir);
+            let state = match &scan {
+                Some(result) if result.kind == SceneKind::Splats => "splats",
+                Some(_) => "points",
+                None => "unfinished",
+            };
+            let note = if scan.is_none() {
+                std::fs::read_to_string(dir.join("log.txt"))
+                    .ok()
+                    .and_then(|text| text.lines().rev().find(|line| !line.trim().is_empty()).map(str::to_owned))
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            ScanEntry {
+                name: entry.file_name().to_string_lossy().into_owned(),
+                modified_ms,
+                state,
+                frames: report.as_ref().and_then(|r| r.get("frames")?.as_u64()).unwrap_or(0) as u32,
+                seconds: report.as_ref().and_then(|r| r.get("total_seconds")?.as_f64()).unwrap_or(0.0) as u32,
+                scan,
+                note,
+            }
+        })
+        .collect();
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.modified_ms));
+    entries
 }
 
 /// Furniture found in `media/assets/`.

@@ -31,6 +31,7 @@ struct AssetFile {
     height_cm: Option<f32>,
     notes: String,
     source_url: String,
+    tags: Vec<String>,
 }
 
 /// One piece of furniture from the catalog.
@@ -44,6 +45,8 @@ pub struct Asset {
     pub size: Option<AssetSize>,
     pub notes: String,
     pub source_url: String,
+    /// Free words for the search, e.g. `grey`, `fabric`, `corner`.
+    pub tags: Vec<String>,
     pub images: Vec<PathBuf>,
     pub dir: PathBuf,
 }
@@ -78,6 +81,7 @@ impl Asset {
             size,
             notes: file.notes,
             source_url: file.source_url,
+            tags: file.tags.into_iter().map(|tag| tag.trim().to_lowercase()).filter(|tag| !tag.is_empty()).collect(),
             images,
             id,
             dir: dir.to_path_buf(),

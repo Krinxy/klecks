@@ -16,11 +16,15 @@ import json
 import sys
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 GRID = 96            # cells along the longer side of the plan
 TRIM = (1.0, 99.0)   # percentiles that cut stray points away from the plan's bounds
 MAX_POINTS = 1_500_000
+RANGE = 0.35         # how far a camera is credited with seeing, as a share of the plan's longer side
+THIN_FRAMES = 4      # a cell seen by fewer frames than this counts as thin
+MIN_FLAT = 0.25      # a camera looking mostly up or down says nothing about the plan
 
 
 def read_points(path: Path) -> np.ndarray:
@@ -81,13 +85,73 @@ def build(scan: Path) -> dict:
     density = (255 * density / max(density.max(), 1e-9)).astype(int)
 
     heading = forward @ basis
-    heading /= np.maximum(np.linalg.norm(heading, axis=1, keepdims=True), 1e-9)
+    flat = np.linalg.norm(heading, axis=1)
+    heading /= np.maximum(flat[:, None], 1e-9)
     cameras = [
         [round(float((spot[i, 0] - low[0]) * scale), 2), round(float((spot[i, 1] - low[1]) * scale), 2),
          video_of[i], round(float(heading[i, 0]), 3), round(float(heading[i, 1]), 3)]
         for i in range(len(spot))
     ]
-    return {"width": width, "height": height, "cells": density.tolist(), "cameras": cameras}
+    intrinsic = np.load(scan / "cameras.npz")["intrinsic"]
+    score = coverage(np.array([[c[0], c[1]] for c in cameras]), heading, flat, intrinsic, video_of, density, scale, size)
+    return {"width": width, "height": height, "cells": density.tolist(), "cameras": cameras, **score}
+
+
+def coverage(spots: np.ndarray, heading: np.ndarray, flat: np.ndarray, intrinsic: np.ndarray,
+             video_of: list[int], density: np.ndarray, scale: float, size: np.ndarray) -> dict:
+    """Which film saw which part of the footprint.
+
+    A cell counts as seen by a frame when it lies in front of the camera, inside its field of view and within
+    RANGE of the plan. Walls that hide things are ignored, so the numbers are an estimate, good for comparing
+    films with each other and for finding the thin parts, not a measurement."""
+    ys, xs = np.nonzero(density)
+    centers = np.stack([xs + 0.5, ys + 0.5], axis=1)
+    reach = RANGE * max(density.shape)
+    videos = max(video_of) + 1
+    seen_by = np.zeros((videos, len(centers)), dtype=bool)
+    frames = np.zeros(len(centers), dtype=int)
+    per_video_frames = [0] * videos
+    for i, spot in enumerate(spots):
+        per_video_frames[video_of[i]] += 1
+        if flat[i] < MIN_FLAT:
+            continue
+        half = np.arctan(intrinsic[i][0][2] / intrinsic[i][0][0])
+        offset = centers - spot
+        distance = np.linalg.norm(offset, axis=1)
+        cosine = (offset @ heading[i]) / np.maximum(distance, 1e-9)
+        visible = (distance >= 1) & (distance <= reach) & (cosine >= np.cos(half))
+        seen_by[video_of[i]] |= visible
+        frames += visible
+    total = max(len(centers), 1)
+    once = seen_by.sum(axis=0) == 1
+    result = {
+        "videos": [
+            {"frames": per_video_frames[v], "seen": int(seen_by[v].sum()),
+             "unique": int((seen_by[v] & once).sum())}
+            for v in range(videos)
+        ],
+        "footprint": int(len(centers)),
+        "covered_pct": int(round(100 * (frames >= THIN_FRAMES).sum() / total)),
+    }
+    grid = np.zeros_like(density)
+    grid[ys, xs] = np.minimum(frames, 9)
+    result["seen"] = grid.tolist()
+
+    thin = np.zeros(density.shape, dtype=np.uint8)
+    thin[ys[frames < THIN_FRAMES], xs[frames < THIN_FRAMES]] = 1
+    count, labels, stats, middles = cv2.connectedComponentsWithStats(thin, connectivity=8)
+    result["thin"] = None
+    if count > 1:
+        biggest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+        area = int(stats[biggest, cv2.CC_STAT_AREA])
+        if area >= max(8, 0.01 * total):
+            result["thin"] = {
+                "cells": area,
+                "share_pct": int(round(100 * area / total)),
+                "x": round(float(middles[biggest][0]) / density.shape[1], 3),
+                "y": round(float(middles[biggest][1]) / density.shape[0], 3),
+            }
+    return result
 
 
 def main() -> int:
