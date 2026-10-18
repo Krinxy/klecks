@@ -106,3 +106,9 @@ When running the built exe from a target dir, set `KLECKS_CONFIG_DIR`.
   Doors come from `lab/detect_doors.py` (OWLv2 on the GPU, boxes + VGGT depth -> plan cells, merged); the person confirms,
   rejects or adds them in the room screen and says where they lead. Answers are kept in `media/rooms/<room>/doors.json`
   (matched by plan position, so a rescan keeps them). `depth.npz` is written by every scan for this.
+- Furniture (`placement.rs`): pieces from the catalog are dragged on the plan and shown as boxes in the 3D view
+  (`setLayout` in viewer.js); "cut out an area" hides splats with a Spark `SplatEdit` box. Both live in `layout.json` of the
+  room's folder. The plan's size in cm is estimated from a phone held at 140 cm (`plan.json` transform `cm_per_cell`) and can be
+  adjusted per room. Reads of signals inside `sync_viewer` must stay untracked or the room screen rebuilds itself.
+- Test windows from the CDP scripts pop up on the owner's screen and react to their mouse: move them off screen first
+  (SetWindowPos x=-6000) and set `KLECKS_OPEN_SCENE`/`KLECKS_AUTOSCAN` explicitly.

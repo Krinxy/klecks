@@ -100,6 +100,8 @@ pub struct RoomOverview {
     history: Vec<ScanEntry>,
     doors: Vec<DoorView>,
     other_rooms: Vec<RoomRef>,
+    /// Furniture placed in the room and areas cut out of the scan (`layout.json` in the room's folder).
+    layout: serde_json::Value,
 }
 
 #[derive(Serialize)]
@@ -222,7 +224,31 @@ pub fn room_overview(state: State<AppState>, room: String) -> Result<RoomOvervie
         .filter(|other| other.id != found.id)
         .map(|other| RoomRef { id: other.id, name: other.name })
         .collect();
-    Ok(RoomOverview { room: found, scan, videos, frames, plan, history, doors, other_rooms })
+    let layout = read_layout(&found);
+    Ok(RoomOverview { room: found, scan, videos, frames, plan, history, doors, other_rooms, layout })
+}
+
+fn read_layout(room: &Room) -> serde_json::Value {
+    std::fs::read_to_string(room.dir.join("layout.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| serde_json::json!({ "items": [], "cuts": [] }))
+}
+
+/// Saves the furniture and cut-outs of a room. The shape is the UI's business (items, cuts, a scale override);
+/// the backend only makes sure it is an object and keeps it small.
+#[tauri::command]
+pub fn save_layout(state: State<AppState>, room: String, layout: serde_json::Value) -> Result<(), String> {
+    const MAX_BYTES: usize = 1_000_000;
+    let found = library(&state)?.room(&room).ok_or("That room does not exist.")?;
+    if !layout.is_object() {
+        return Err("The layout is not valid.".into());
+    }
+    let text = serde_json::to_string_pretty(&layout).map_err(|error| error.to_string())?;
+    if text.len() > MAX_BYTES {
+        return Err("The layout is too large.".into());
+    }
+    std::fs::write(found.dir.join("layout.json"), text).map_err(|error| format!("Could not save the layout: {error}"))
 }
 
 /// Doors closer than this many plan cells are the same door.

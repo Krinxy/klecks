@@ -561,3 +561,30 @@ code {
 .map-node.is-selected polygon { fill: var(--sage); stroke: var(--sage); }
 .map-node.is-selected text { fill: var(--sage-ink); }
 .map-note { font-size: 12.5px; color: var(--text-faint); line-height: 1.5; }
+
+.side-tabs { padding-top: 10px; }
+.side-body { padding: 18px 24px 22px; overflow-y: auto; min-height: 0; flex: 1; scrollbar-width: thin; scrollbar-color: rgba(159, 179, 80, 0.5) transparent; }
+.panel-media { padding: 0; }
+.side-head { margin: 22px 0 6px; font-size: 16px; font-weight: 700; }
+.side-head:first-child { margin-top: 0; }
+.doors-title { display: none; }
+.pick-grid, .placed-list { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 8px; }
+.pick-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.pick { display: grid; gap: 2px; width: 100%; padding: 10px 12px; border: 0; background: rgba(255, 255, 255, 0.06); color: var(--text); text-align: left; font: inherit; cursor: pointer; clip-path: polygon(0 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%); }
+.pick:hover:not(:disabled) { background: var(--sage); color: var(--sage-ink); }
+.pick:disabled { opacity: 0.45; cursor: not-allowed; }
+.pick-name { font-weight: 700; font-size: 14px; }
+.pick-size { font-size: 12px; opacity: 0.75; }
+.placed { width: 100%; padding: 8px 12px; border: 0; background: rgba(255, 255, 255, 0.05); color: var(--text); text-align: left; font: inherit; cursor: pointer; }
+.placed.is-selected { background: var(--sage); color: var(--sage-ink); }
+.cut-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; background: rgba(255, 255, 255, 0.05); font-size: 13.5px; }
+.chosen .detail-actions { margin-top: 10px; }
+.piece rect { fill: rgba(159, 179, 80, 0.45); stroke: var(--sage); stroke-width: 0.35; cursor: grab; }
+.piece text { fill: var(--paper); font-size: 2.3px; font-weight: 800; pointer-events: none; }
+.piece-front { stroke: var(--paper); stroke-width: 0.8; pointer-events: none; }
+.piece.is-selected rect { fill: rgba(230, 241, 154, 0.6); stroke: var(--paper); stroke-width: 0.5; }
+.cut { fill: rgba(224, 138, 106, 0.28); stroke: #e08a6a; stroke-width: 0.35; stroke-dasharray: 1 0.8; pointer-events: none; }
+.cut.is-sketch { fill: rgba(224, 138, 106, 0.18); }
+.plan svg { touch-action: none; }
+
+.chosen { margin-top: 20px; }

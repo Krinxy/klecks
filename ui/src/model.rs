@@ -4,7 +4,7 @@
 // Last modified: 2026-10-17
 // ---
 // Mirrors the payloads of app/src/commands.rs and core/reconstruct.
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct GpuInfo {
@@ -100,6 +100,22 @@ pub struct Thin {
     pub y: f64,
 }
 
+/// How plan cells map back to the scan: lets furniture drawn on the plan stand in the 3D view.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Transform {
+    /// Three rows of two numbers: the plan's x and y axes in scan coordinates.
+    pub basis: Vec<[f64; 2]>,
+    pub low: [f64; 2],
+    /// Plan cells per scan unit.
+    pub scale: f64,
+    pub up: [f64; 3],
+    /// Height of the floor along `up`.
+    pub floor: f64,
+    /// Estimated size of a plan cell in centimetres, from the height the phone was held at.
+    pub cm_per_cell: Option<f64>,
+}
+
 /// Top-down plan of a scanned room: a density grid, where the cameras walked and how well each part is seen.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 #[serde(default)]
@@ -115,6 +131,7 @@ pub struct Plan {
     pub footprint: u32,
     pub covered_pct: u32,
     pub thin: Option<Thin>,
+    pub transform: Option<Transform>,
 }
 
 /// One scan folder of a room, finished or stopped.
@@ -157,6 +174,41 @@ pub struct Apartment {
     pub links: Vec<(String, String)>,
 }
 
+/// A piece of furniture of the catalog standing on the plan.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct Placed {
+    pub id: u32,
+    pub asset: String,
+    /// Centre on the plan, in cells.
+    pub x: f64,
+    pub y: f64,
+    /// Degrees, clockwise on the plan.
+    pub turn: f64,
+}
+
+/// A part of the scan that is hidden, as a rectangle on the plan and a height above the floor.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct Cut {
+    pub id: u32,
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+    pub top_cm: f64,
+}
+
+/// What the person did to a room, saved in `layout.json` of the room's folder.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct Layout {
+    pub items: Vec<Placed>,
+    pub cuts: Vec<Cut>,
+    /// The person's own size of a plan cell, when the estimate is off.
+    pub cm_per_cell: Option<f64>,
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct RoomOverview {
     pub room: Room,
@@ -167,6 +219,7 @@ pub struct RoomOverview {
     pub history: Vec<ScanEntry>,
     pub doors: Vec<DoorView>,
     pub other_rooms: Vec<RoomRef>,
+    pub layout: Layout,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]

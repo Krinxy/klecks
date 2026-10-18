@@ -11,7 +11,7 @@
 // Controls: drag = look around, right/middle drag = pan, wheel = zoom,
 //           W A S D = walk, Q / E = down / up, Shift = faster, double click = reset.
 import * as THREE from "./vendor/three.module.min.js";
-import { SparkRenderer, SplatMesh } from "./vendor/spark.module.min.js";
+import { SparkRenderer, SplatEdit, SplatEditRgbaBlendMode, SplatEditSdf, SplatEditSdfType, SplatMesh } from "./vendor/spark.module.min.js";
 
 const RECORD_BYTES = 15; // float32 x,y,z + uint8 r,g,b (see lab/vggt_try.py write_ply)
 const MAX_PITCH = 1.5;
@@ -68,6 +68,7 @@ class KlecksViewer {
     this.#clear();
     const header = new TextDecoder("ascii").decode(bytes.subarray(0, Math.min(bytes.byteLength, 2048)));
     const result = header.includes("f_dc_0") ? await this.#showSplats(bytes, sceneScale) : this.#showPoints(bytes.buffer);
+    this.#applyLayout();
     timings.totalMs = Math.round(performance.now() - timings.startedAt);
     console.log("[klecks viewer] load", JSON.stringify(timings));
     return result;
@@ -109,6 +110,7 @@ class KlecksViewer {
   }
 
   #clear() {
+    this.#dropLayout();
     if (this.cloud) {
       this.scene.remove(this.cloud);
       this.cloud.geometry.dispose();
@@ -154,6 +156,85 @@ class KlecksViewer {
 
     this.resetView();
     return { kind: "points", count };
+  }
+
+  /**
+   * Shows what the person did to the room: furniture as boxes, cut-outs as hidden parts of the scan.
+   * Everything is in the coordinates of the scan. `frame` gives the floor's axes ({ a, b, up }, unit vectors),
+   * an item is { pos, size, turn, selected } with `size` along its width, height and depth, a cut is { pos, size, turn }.
+   */
+  setLayout(layout) {
+    this.layout = layout;
+    this.#applyLayout();
+  }
+
+  #dropLayout() {
+    if (this.proxies) {
+      this.proxies.traverse((object) => {
+        object.geometry?.dispose?.();
+        object.material?.dispose?.();
+      });
+      this.scene.remove(this.proxies);
+      this.proxies = null;
+    }
+    if (this.cutEdit) {
+      this.cutEdit.removeFromParent();
+      this.cutEdit = null;
+    }
+  }
+
+  /** Orientation of a box that stands on the floor, turned by `turn` degrees like a rectangle on the plan. */
+  #boxTurn(frame, turn) {
+    const [a, b, up] = [frame.a, frame.b, frame.up].map((v) => new THREE.Vector3(...v));
+    const angle = (turn * Math.PI) / 180;
+    const width = a.clone().multiplyScalar(Math.cos(angle)).addScaledVector(b, Math.sin(angle));
+    const depth = a.clone().multiplyScalar(-Math.sin(angle)).addScaledVector(b, Math.cos(angle));
+    // width x up = -depth, so the right-handed set is (width, up, -depth)
+    const matrix = new THREE.Matrix4().makeBasis(width, up, depth.clone().negate());
+    return new THREE.Quaternion().setFromRotationMatrix(matrix);
+  }
+
+  #applyLayout() {
+    if (!this.scene) return;
+    this.#dropLayout();
+    const layout = this.layout;
+    if (!layout || !layout.frame) {
+      this.dirty = true;
+      return;
+    }
+    const group = new THREE.Group();
+    group.rotation.x = Math.PI; // same flip as the scene: its y axis points down
+    for (const item of layout.items || []) {
+      const box = new THREE.Mesh(
+        new THREE.BoxGeometry(1, 1, 1),
+        new THREE.MeshBasicMaterial({ color: item.selected ? 0xe6f19a : 0x9fb350, transparent: true, opacity: item.selected ? 0.5 : 0.32, depthWrite: false }),
+      );
+      const edges = new THREE.LineSegments(
+        new THREE.EdgesGeometry(box.geometry),
+        new THREE.LineBasicMaterial({ color: item.selected ? 0xffffff : 0xd7e68a }),
+      );
+      box.add(edges);
+      box.position.set(...item.pos);
+      box.scale.set(...item.size);
+      box.quaternion.copy(this.#boxTurn(layout.frame, item.turn || 0));
+      group.add(box);
+    }
+    this.scene.add(group);
+    this.proxies = group;
+
+    if (this.splats && (layout.cuts || []).length) {
+      const edit = new SplatEdit({ rgbaBlendMode: SplatEditRgbaBlendMode.MULTIPLY, sdfSmooth: 0, softEdge: 0 });
+      for (const cut of layout.cuts) {
+        const sdf = new SplatEditSdf({ type: SplatEditSdfType.BOX, opacity: 0 });
+        sdf.position.set(...cut.pos);
+        sdf.scale.set(cut.size[0] / 2, cut.size[1] / 2, cut.size[2] / 2);
+        sdf.quaternion.copy(this.#boxTurn(layout.frame, cut.turn || 0));
+        edit.add(sdf);
+      }
+      this.splats.add(edit);
+      this.cutEdit = edit;
+    }
+    this.dirty = true;
   }
 
   /** Moves the camera: yaw/pitch in radians, radius and pivot ([x, y, z]) in scene units. */

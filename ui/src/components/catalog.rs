@@ -318,9 +318,12 @@ fn asset_detail(asset: Asset) -> impl IntoView {
         })}
         {(!asset.notes.is_empty()).then(|| view! { <p class="detail-note">{asset.notes.clone()}</p> })}
 
-        <div class="detail-actions stack">
-            <button class="btn btn-primary" disabled title="Placing furniture in a scan comes next">{if surface { "Apply to a wall" } else { "Place in a room" }}</button>
-            <button class="btn btn-ghost" disabled title="Comes with the placement editor">"Move or remove from scan"</button>
-        </div>
+        <p class="detail-note">
+            {if surface {
+                "Surfaces are not placed in rooms yet."
+            } else {
+                "To put it in a room, open the room and choose the Furniture tab."
+            }}
+        </p>
     }
 }

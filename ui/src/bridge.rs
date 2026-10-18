@@ -30,6 +30,9 @@ extern "C" {
 
     #[wasm_bindgen(js_namespace = ["window", "klecksViewer"], js_name = dispose)]
     fn viewer_dispose();
+
+    #[wasm_bindgen(js_namespace = ["window", "klecksViewer"], js_name = setLayout)]
+    fn viewer_set_layout(layout: &JsValue);
 }
 
 pub struct TauriBridge;
@@ -141,5 +144,10 @@ impl Viewer3d {
 
     pub fn dispose() {
         viewer_dispose();
+    }
+
+    /// Shows furniture boxes and hidden parts in the scene (see `setLayout` in viewer.js).
+    pub fn set_layout(layout: &JsValue) {
+        viewer_set_layout(layout);
     }
 }

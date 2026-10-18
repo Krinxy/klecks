@@ -6,12 +6,12 @@
 use leptos::prelude::*;
 
 use crate::bridge::TauriBridge;
+use crate::components::placement::{furniture_panel, plan_layer, point_in_plan, Placement, Tool};
 use crate::components::scene_viewer::SceneViewer;
 use crate::components::stage::Stage;
 use crate::flow::ScanFlow;
 use crate::format::{count_of, when};
 use crate::model::{DoorView, Plan, RoomOverview, RoomRef, Thin, VideoScore, VideoShare, View};
-use wasm_bindgen::JsCast;
 use wasm_bindgen::JsValue;
 
 /// How many of the six density steps a cell shows (0 = empty).
@@ -26,6 +26,14 @@ const THIN_FRAMES: u32 = 4;
 enum Pane {
     Plan,
     Camera,
+}
+
+/// What the right-hand panel shows.
+#[derive(Clone, Copy, PartialEq)]
+enum Side {
+    Media,
+    Doors,
+    Furniture,
 }
 
 /// One room: the plan of what the films saw, the free camera, and what each film gave the scene.
@@ -89,7 +97,9 @@ fn room_body(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String>>
     let scan_room = room_id.clone();
     let scan_label = room_name.clone();
     let doors = RwSignal::new(data.doors.clone());
-    let adding = RwSignal::new(false);
+    let plan_size = data.plan.as_ref().map(|plan| (plan.width as f64, plan.height as f64)).unwrap_or((0.0, 0.0));
+    let placement = Placement::new(room_id.clone(), data.layout.clone(), data.plan.as_ref().and_then(|plan| plan.transform.clone()), plan_size);
+    let side = RwSignal::new(Side::Media);
     let other_rooms = data.other_rooms.clone();
     let plan_room = room_id.clone();
     let list_room = room_id.clone();
@@ -124,40 +134,61 @@ fn room_body(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String>>
                         <button class="tab" class:is-selected=move || pane.get() == Pane::Plan role="tab" on:click=move |_| pane.set(Pane::Plan)>"Floor plan"</button>
                         <button class="tab" class:is-selected=move || pane.get() == Pane::Camera role="tab"
                             disabled=scan_result.is_none() on:click=move |_| pane.set(Pane::Camera)>"Free camera"</button>
-                        <button class="tab tab-add" class:is-selected=move || adding.get() class:is-hidden=move || pane.get() != Pane::Plan || plan_missing
-                            title="Click the plan to place a door yourself" on:click=move |_| adding.update(|on| *on = !*on)>
-                            {move || if adding.get() { "Click the plan..." } else { "Add door" }}
+                        <button class="tab tab-add" class:is-selected=move || placement.tool.get() == Tool::Door class:is-hidden=move || pane.get() != Pane::Plan || plan_missing
+                            title="Click the plan to place a door yourself"
+                            on:click=move |_| placement.tool.update(|tool| *tool = if *tool == Tool::Door { Tool::None } else { Tool::Door })>
+                            {move || if placement.tool.get() == Tool::Door { "Click the plan..." } else { "Add door" }}
                         </button>
                     </div>
                     <div class="panel-stage">
                         {move || match (pane.get(), scan_result.clone()) {
-                            (Pane::Camera, Some(scan)) => view! { <SceneViewer scan=scan flow=flow embedded=true /> }.into_any(),
-                            _ => plan_view(plan.clone(), scanned, doors, adding, plan_room.clone()).into_any(),
+                            (Pane::Camera, Some(scan)) => {
+                                placement.sync_viewer();
+                                view! { <SceneViewer scan=scan flow=flow embedded=true /> }.into_any()
+                            }
+                            _ => plan_view(plan.clone(), scanned, doors, placement, plan_room.clone()).into_any(),
                         }}
                     </div>
                 </section>
 
                 <section class="panel panel-media">
-                    <h2 class="panel-title">"Media that built this room"</h2>
-                    <p class="panel-sub">"The bar is how much of the room a film saw. The number is what only that film saw. Both are estimates from where the camera stood."</p>
-                    <ul class="media-list">
-                        {videos.into_iter().enumerate().map(|(rank, video)| {
-                            let score = video.index.and_then(|index| scores.get(index)).cloned();
-                            media_row(video, rank, score, footprint)
-                        }).collect_view()}
-                    </ul>
-                    {door_list(doors, other_rooms, list_room)}
-                    {next_best.map(|text| view! {
-                        <div class="hint-box">
-                            <h3 class="hint-title">"Next best film"</h3>
-                            <p>{text}</p>
-                        </div>
-                    })}
-                    {(newer > 0).then(|| view! {
-                        <p class="media-note">{format!("{} not in the scene yet. Scan again to add {}.",
-                            count_of(newer, "new video is", "new videos are"), if newer == 1 { "it" } else { "them" })}</p>
-                    })}
-                    {(!has_videos).then(|| view! { <p class="media-note">"This room has no videos. Put them in its folder, then reconstruct."</p> })}
+                    <div class="tabs side-tabs" role="tablist">
+                        <button class="tab" class:is-selected=move || side.get() == Side::Media role="tab" on:click=move |_| side.set(Side::Media)>"Media"</button>
+                        <button class="tab" class:is-selected=move || side.get() == Side::Doors role="tab" on:click=move |_| side.set(Side::Doors)>
+                            {move || {
+                                let open = doors.get().iter().filter(|door| door.state == "detected").count();
+                                if open > 0 { format!("Doors ({open} to check)") } else { "Doors".to_string() }
+                            }}
+                        </button>
+                        <button class="tab" class:is-selected=move || side.get() == Side::Furniture role="tab" on:click=move |_| side.set(Side::Furniture)>"Furniture"</button>
+                    </div>
+                    <div class="side-body">
+                        {move || match side.get() {
+                            Side::Media => view! {
+                                <h2 class="panel-title">"Media that built this room"</h2>
+                                <p class="panel-sub">"The bar is how much of the room a film saw. The number is what only that film saw. Both are estimates from where the camera stood."</p>
+                                <ul class="media-list">
+                                    {videos.clone().into_iter().enumerate().map(|(rank, video)| {
+                                        let score = video.index.and_then(|index| scores.get(index)).cloned();
+                                        media_row(video, rank, score, footprint)
+                                    }).collect_view()}
+                                </ul>
+                                {next_best.clone().map(|text| view! {
+                                    <div class="hint-box">
+                                        <h3 class="hint-title">"Next best film"</h3>
+                                        <p>{text}</p>
+                                    </div>
+                                })}
+                                {(newer > 0).then(|| view! {
+                                    <p class="media-note">{format!("{} not in the scene yet. Scan again to add {}.",
+                                        count_of(newer, "new video is", "new videos are"), if newer == 1 { "it" } else { "them" })}</p>
+                                })}
+                                {(!has_videos).then(|| view! { <p class="media-note">"This room has no videos. Put them in its folder, then reconstruct."</p> })}
+                            }.into_any(),
+                            Side::Doors => door_list(doors, other_rooms.clone(), list_room.clone()).into_any(),
+                            Side::Furniture => furniture_panel(placement).into_any(),
+                        }}
+                    </div>
                 </section>
             </div>
         </div>
@@ -216,7 +247,7 @@ fn media_row(video: VideoShare, rank: usize, score: Option<VideoScore>, footprin
 }
 
 /// The footprint of the room seen from above, with the way the camera walked over it.
-fn plan_view(plan: Option<Plan>, scanned: bool, doors: RwSignal<Vec<DoorView>>, adding: RwSignal<bool>, room: String) -> impl IntoView {
+fn plan_view(plan: Option<Plan>, scanned: bool, doors: RwSignal<Vec<DoorView>>, placement: Placement, room: String) -> impl IntoView {
     let Some(plan) = plan else {
         let text = if scanned {
             "This scan has no plan yet. Scan the room again and it will be drawn."
@@ -226,6 +257,7 @@ fn plan_view(plan: Option<Plan>, scanned: bool, doors: RwSignal<Vec<DoorView>>, 
         return view! { <div class="plan-empty">{text}</div> }.into_any();
     };
     let (width, height) = (plan.width as f64, plan.height as f64);
+    let svg = NodeRef::<leptos::svg::Svg>::new();
     let cells = plan_cells(&plan);
     let hatch = plan_thin(&plan);
     let covered = plan.covered_pct;
@@ -258,19 +290,32 @@ fn plan_view(plan: Option<Plan>, scanned: bool, doors: RwSignal<Vec<DoorView>>, 
     view! {
         <div class="plan">
             <svg
-                class:is-adding=move || adding.get()
+                node_ref=svg
+                class:is-adding=move || placement.tool.get() != Tool::None
                 viewBox=format!("-2 -2 {} {}", width + 4.0, height + 4.0)
                 role="img"
                 aria-label="Floor plan seen from above"
                 on:click=move |event| {
-                    if !adding.get_untracked() {
+                    if placement.tool.get_untracked() != Tool::Door {
                         return;
                     }
-                    if let Some((x, y)) = plan_point(&event, width + 4.0, height + 4.0) {
-                        adding.set(false);
-                        save_door(room.clone(), x, y, "manual", None, doors);
+                    if let Some(at) = pointer_at(svg, event.client_x(), event.client_y(), width + 4.0, height + 4.0) {
+                        placement.tool.set(Tool::None);
+                        save_door(room.clone(), at.0, at.1, "manual", None, doors);
                     }
                 }
+                on:pointerdown=move |event| {
+                    if let Some(at) = pointer_at(svg, event.client_x(), event.client_y(), width + 4.0, height + 4.0) {
+                        placement.press(at);
+                    }
+                }
+                on:pointermove=move |event| {
+                    if let Some(at) = pointer_at(svg, event.client_x(), event.client_y(), width + 4.0, height + 4.0) {
+                        placement.moved(at);
+                    }
+                }
+                on:pointerup=move |_| placement.released()
+                on:pointerleave=move |_| placement.released()
             >
                 <defs>
                     <pattern id="thin-hatch" width="1.6" height="1.6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
@@ -281,6 +326,7 @@ fn plan_view(plan: Option<Plan>, scanned: bool, doors: RwSignal<Vec<DoorView>>, 
                 {cells}
                 {hatch}
                 {paths}
+                {plan_layer(placement, svg, (width + 4.0, height + 4.0))}
                 {move || door_markers(doors.get())}
             </svg>
             <p class="plan-note">
@@ -343,23 +389,10 @@ fn plan_cells(plan: &Plan) -> impl IntoView {
         .collect_view()
 }
 
-/// Where a click landed on the plan, in plan cells. The SVG keeps its aspect ratio, so the picture is
-/// centred inside the element and the offsets have to be taken off first.
-fn plan_point(event: &leptos::ev::MouseEvent, view_width: f64, view_height: f64) -> Option<(f64, f64)> {
-    let element = event.current_target()?;
-    let measure = js_sys::Reflect::get(&element, &"getBoundingClientRect".into()).ok()?.dyn_into::<js_sys::Function>().ok()?;
-    let rect = measure.call0(&element).ok()?;
-    let side = |name: &str| js_sys::Reflect::get(&rect, &name.into()).ok().and_then(|value| value.as_f64());
-    let (left_edge, top_edge, width, height) = (side("left")?, side("top")?, side("width")?, side("height")?);
-    let scale = (width / view_width).min(height / view_height);
-    if scale <= 0.0 {
-        return None;
-    }
-    let left = (width - view_width * scale) / 2.0;
-    let top = (height - view_height * scale) / 2.0;
-    let x = (event.client_x() as f64 - left_edge - left) / scale - 2.0;
-    let y = (event.client_y() as f64 - top_edge - top) / scale - 2.0;
-    Some((x, y))
+/// Where the pointer is on the plan, in cells.
+fn pointer_at(svg: NodeRef<leptos::svg::Svg>, x: i32, y: i32, view_width: f64, view_height: f64) -> Option<(f64, f64)> {
+    let element = svg.get()?;
+    point_in_plan(element.as_ref(), (x as f64, y as f64), view_width, view_height)
 }
 
 /// Saves what the person decided about a door and shows the answer.

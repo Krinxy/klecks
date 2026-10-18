@@ -22,6 +22,7 @@ import numpy as np
 GRID = 96            # cells along the longer side of the plan
 TRIM = (1.0, 99.0)   # percentiles that cut stray points away from the plan's bounds
 MAX_POINTS = 1_500_000
+CAMERA_HEIGHT_CM = 140.0  # a phone held at chest height; sets the size of the scene in centimetres
 RANGE = 0.35         # how far a camera is credited with seeing, as a share of the plan's longer side
 THIN_FRAMES = 4      # a cell seen by fewer frames than this counts as thin
 MIN_FLAT = 0.25      # a camera looking mostly up or down says nothing about the plan
@@ -94,7 +95,12 @@ def build(scan: Path) -> dict:
     ]
     intrinsic = np.load(scan / "cameras.npz")["intrinsic"]
     score = coverage(np.array([[c[0], c[1]] for c in cameras]), heading, flat, intrinsic, video_of, density, scale, size)
-    transform = {"basis": basis.tolist(), "low": low.tolist(), "scale": float(scale)}
+    # Real-world size: the floor is where the lowest points are, the cameras were about CAMERA_HEIGHT_CM above it.
+    floor = float(np.percentile(points @ up, 3))
+    camera_height = float(np.median(centers @ up - floor))
+    cm_per_cell = CAMERA_HEIGHT_CM / camera_height / scale if camera_height > 1e-6 else None
+    transform = {"basis": basis.tolist(), "low": low.tolist(), "scale": float(scale), "up": up.tolist(),
+                 "floor": floor, "cm_per_cell": cm_per_cell}
     return {"width": width, "height": height, "cells": density.tolist(), "cameras": cameras, "transform": transform, **score}
 
 

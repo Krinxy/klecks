@@ -48,6 +48,7 @@ pub fn run() {
             library_commands::list_rooms,
             library_commands::room_overview,
             library_commands::set_door,
+            library_commands::save_layout,
             library_commands::apartment,
             library_commands::list_assets,
             library_commands::list_scans,
