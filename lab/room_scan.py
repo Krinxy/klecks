@@ -79,6 +79,15 @@ def probe_video(video: Path) -> dict:
             "hdr": stream.get("color_transfer") in HDR_TRANSFERS}
 
 
+def keyframe_count(video: Path) -> int:
+    """How many keyframes the clip has, from the container alone (nothing is decoded)."""
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=flags", "-of", "csv=p=0", str(video)],
+        capture_output=True, text=True,
+    )
+    return sum(1 for line in result.stdout.splitlines() if line.startswith("K"))
+
+
 def video_seconds(video: Path) -> float:
     return probe_video(video)["duration"]
 
@@ -97,16 +106,27 @@ def extract_frames(video: Path, out_dir: Path, tag: str, count: int) -> list[Pat
     shrink = (f"scale='if(gt(iw,ih),min({FRAME_LONG_SIDE},iw),-2)':'if(gt(iw,ih),-2,min({FRAME_LONG_SIDE},ih))'"
               ":flags=lanczos")
     attempts = [[sample, shrink, TONEMAP], [sample, shrink]] if info["hdr"] else [[sample, shrink]]  # tone mapping needs zscale
+    # Decoding every frame of a 4K film is what takes minutes; the keyframes (about one per second) are cheap to
+    # decode, the sharpest frames of the film, and plenty to pick `count` from. Short clips with too few keyframes
+    # and clips where this fails are read frame by frame as before.
+    fast = keyframe_count(video) >= count
+    modes = [["-skip_frame", "nokey"], []] if fast else [[]]
     problem = ""
-    for chain in attempts:
-        command = ["ffmpeg", "-v", "error", "-y", "-i", str(video), "-vf", ",".join(chain),
-                   "-q:v", "2", str(out_dir / f"{tag}_%04d.jpg")]
-        result = subprocess.run(command, capture_output=True, text=True)
-        if result.returncode == 0:
+    done = False
+    for mode in modes:
+        for chain in attempts:
+            command = ["ffmpeg", "-v", "error", "-y", *mode, "-i", str(video), "-vf", ",".join(chain),
+                       "-q:v", "2", str(out_dir / f"{tag}_%04d.jpg")]
+            result = subprocess.run(command, capture_output=True, text=True)
+            made = len(list(out_dir.glob(f"{tag}_*.jpg")))
+            if result.returncode == 0 and (not mode or made >= 0.9 * min(count, info["frames"])):
+                done = True
+                break
+            problem = result.stderr.strip()[-300:]
+            for leftover in out_dir.glob(f"{tag}_*.jpg"):
+                leftover.unlink()
+        if done:
             break
-        problem = result.stderr.strip()[-300:]
-        for leftover in out_dir.glob(f"{tag}_*.jpg"):
-            leftover.unlink()
     frames = sorted(out_dir.glob(f"{tag}_*.jpg"))
     if not frames:
         # a film that silently drops out would give a room that is missing a part: fail loudly instead
