@@ -34,10 +34,15 @@ MIN_FRAMES = 3       # a door seen by one frame only is kept when the detector i
 SURE = 0.5
 
 
-def load_depth(scan: Path) -> np.ndarray | None:
-    for name, key in (("depth.npz", "depth"), ("vggt.npz", "depth")):
-        if (scan / name).exists():
-            return np.load(scan / name)[key].astype(np.float32)
+def load_depth(scan: Path) -> list[np.ndarray] | None:
+    """One depth map per frame (they can differ in size from window to window); older scans stored a single array."""
+    if (scan / "depth.npz").exists():
+        data = np.load(scan / "depth.npz")
+        if "depth" in data.files:
+            return [frame.astype(np.float32) for frame in data["depth"]]
+        return [data[f"d{i}"].astype(np.float32) for i in range(len(data.files))]
+    if (scan / "vggt.npz").exists():
+        return [frame.astype(np.float32) for frame in np.load(scan / "vggt.npz")["depth"]]
     return None
 
 
@@ -70,20 +75,21 @@ def detect_frames(paths: list[str]) -> list[list[tuple[float, float, float, floa
     return out
 
 
-def locate(scan: Path, plan: dict, detections: list, depth: np.ndarray) -> list[dict]:
+def locate(scan: Path, plan: dict, detections: list, depth: list[np.ndarray]) -> list[dict]:
     """Boxes -> places on the plan: `{x, y, width, score, frame, video}` in plan cells."""
     cameras = np.load(scan / "cameras.npz")
     extrinsic, intrinsic = cameras["extrinsic"], cameras["intrinsic"]
     frames = json.loads((scan / "frames.json").read_text())
-    boxes = frames.get("boxes") or [[0, 0, depth.shape[2], depth.shape[1]]] * len(frames["paths"])
-    canvas_h, canvas_w = frames.get("height") or depth.shape[1], frames.get("width") or depth.shape[2]
-    shrink = canvas_w / depth.shape[2]  # depth.npz may be stored smaller than the canvas
+    # canvas of every frame; older scans had one for all
+    canvases = frames.get("canvas") or [[frames.get("height") or depth[0].shape[0], frames.get("width") or depth[0].shape[1]]] * len(depth)
+    boxes = frames.get("boxes") or [[0, 0, c[1], c[0]] for c in canvases]
     basis = np.array(plan["transform"]["basis"])
     low, scale = np.array(plan["transform"]["low"]), plan["transform"]["scale"]
 
     places = []
     for index, found in enumerate(detections):
         bx, by, bw, bh = boxes[index]
+        shrink = canvases[index][1] / depth[index].shape[1]  # depth.npz is stored smaller than the canvas
         rotation, translation = extrinsic[index][:, :3], extrinsic[index][:, 3]
         fx, fy, cx = intrinsic[index][0][0], intrinsic[index][1][1], intrinsic[index][0][2]
         for x0, y0, x1, y1, score in found:

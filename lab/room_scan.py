@@ -527,20 +527,11 @@ def main() -> int:
     extrinsic = np.stack(kept["extrinsic"])
     intrinsic = np.stack(kept["intrinsic"])
     np.savez_compressed(args.out / "cameras.npz", extrinsic=extrinsic, intrinsic=intrinsic)
-    np.savez_compressed(args.out / "depth.npz", depth=np.stack(kept["depth"]))
     per_video = [sum(1 for p in kept["paths"] if p.name.startswith(f"{i:02d}_")) for i in range(len(args.videos))]
     (args.out / "frames.json").write_text(json.dumps({
         "paths": [str(p) for p in kept["paths"]], "per_video": per_video,
-        "height": stats["height"], "width": stats["width"], "boxes": [list(b) for b in kept["boxes"]]}))
-    try:
-        from room_plan import build as build_plan
-        (args.out / "plan.json").write_text(json.dumps(build_plan(args.out)))
-        from detect_doors import find_doors
-        plan = json.loads((args.out / "plan.json").read_text())
-        plan["doors"] = find_doors(args.out)
-        (args.out / "plan.json").write_text(json.dumps(plan))
-    except Exception as error:  # the plan is a nicety, never a reason to lose the scan
-        print(f"No floor plan: {error}", file=sys.stderr)
+        "height": stats["height"], "width": stats["width"], "boxes": [list(b) for b in kept["boxes"]],
+        "canvas": [list(c) for c in kept["canvas"]]}))
     centers = centers_of(extrinsic)
     report = {
         "videos": [v.name for v in args.videos],
@@ -564,6 +555,19 @@ def main() -> int:
         "median_depth": stats["median_depth"],
     }
     (args.out / "report.json").write_text(json.dumps(report, indent=2))
+
+    # Extras that are nice to have and never a reason to lose the scan: depth for the door finder, the floor plan, the doors.
+    try:
+        # one array per frame: windows with portrait and landscape films have canvases of different shapes
+        np.savez_compressed(args.out / "depth.npz", **{f"d{i}": depth for i, depth in enumerate(kept["depth"])})
+        from room_plan import build as build_plan
+        (args.out / "plan.json").write_text(json.dumps(build_plan(args.out)))
+        from detect_doors import find_doors
+        plan = json.loads((args.out / "plan.json").read_text())
+        plan["doors"] = find_doors(args.out)
+        (args.out / "plan.json").write_text(json.dumps(plan))
+    except Exception as error:
+        print(f"No floor plan or doors: {error}", file=sys.stderr)
     if stats["stopped"]:
         progress("inference", 90, stats["stopped"])
     if args.colmap:
@@ -583,7 +587,7 @@ def reconstruct(model, upscaler, frame_paths, window, args, dtype):
     Stops early, keeping what is lined up so far, when a part does not fit the one before it.
     """
     spans = plan_parts(len(frame_paths), window, args.overlap)
-    kept = {"paths": [], "boxes": [], "extrinsic": [], "intrinsic": [], "depth": []}
+    kept = {"paths": [], "boxes": [], "extrinsic": [], "intrinsic": [], "depth": [], "canvas": []}
     stats = {"parts": len(spans), "parts_used": 0, "stopped": "", "worst_error": 0.0, "candidates": 0, "kept": 0,
              "dense_seconds": 0.0, "median_depth": 0.0, "height": 0, "width": 0}
     fusion: VoxelFusion | None = None
@@ -618,6 +622,7 @@ def reconstruct(model, upscaler, frame_paths, window, args, dtype):
         kept["extrinsic"] += list(extrinsic[own])
         kept["intrinsic"] += list(part.intrinsic.cpu().numpy()[own])
         kept["depth"] += list(part.depth[own].half().cpu().numpy()[:, ::DEPTH_STRIDE, ::DEPTH_STRIDE])  # for the doors
+        kept["canvas"] += [(part.height, part.width)] * len(part.paths[own])  # windows of other shapes have other canvases
         stats["parts_used"] += 1
 
         next_shared = (spans[number][1] - spans[number + 1][0]) if number + 1 < len(spans) else 0
