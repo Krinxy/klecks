@@ -82,7 +82,7 @@ pub fn SceneViewer(scan: ScanResult, flow: ScanFlow, #[prop(optional)] embedded:
                     view! { <button class="btn btn-primary" on:click=move |_| flow.home()>"Menu"</button> }.into_any()
                 }}
             </div>
-            <p class="hud-hint">"Drag to look around, scroll to zoom, W A S D to walk, right-drag to pan."</p>
+            <p class="hud-hint">"Drag to look around, scroll to zoom, W A S D to walk, Space up, Ctrl down, Shift faster, right-drag to pan."</p>
             <Show when=move || loading.get()>
                 <div class="viewer-overlay">
                     <div class="overlay-box">

@@ -9,7 +9,7 @@
 // Three.js and Spark (splat renderer) are vendored (ui/public/vendor) because the app runs offline.
 //
 // Controls: drag = look around, right/middle drag = pan, wheel = zoom,
-//           W A S D = walk, Q / E = down / up, Shift = faster, double click = reset.
+//           W A S D = walk, Space = up, Ctrl = down (Q / E too), Shift = faster, double click = reset.
 import * as THREE from "./vendor/three.module.min.js";
 import { SparkRenderer, SplatEdit, SplatEditRgbaBlendMode, SplatEditSdf, SplatEditSdfType, SplatMesh } from "./vendor/spark.module.min.js";
 
@@ -423,8 +423,18 @@ class KlecksViewer {
       this.#apply();
     }, { passive: false });
     this.#on(canvas, "dblclick", () => this.resetView());
-    this.#on(window, "keydown", (event) => this.keys.add(event.key.toLowerCase()));
-    this.#on(window, "keyup", (event) => this.keys.delete(event.key.toLowerCase()));
+    // Space must not press the button that still has the focus, and must not scroll anything.
+    const typing = (event) => /^(input|textarea|select)$/i.test(event.target?.tagName || "");
+    this.#on(window, "keydown", (event) => {
+      if (typing(event)) return;
+      if (event.key === " ") event.preventDefault();
+      this.keys.add(event.key.toLowerCase());
+    });
+    this.#on(window, "keyup", (event) => {
+      if (typing(event)) return;
+      if (event.key === " ") event.preventDefault();
+      this.keys.delete(event.key.toLowerCase());
+    });
     this.#on(window, "blur", () => this.keys.clear());
 
     this.resizeObserver = new ResizeObserver(() => this.#resize());
@@ -456,7 +466,7 @@ class KlecksViewer {
     const keys = this.keys;
     const forward = (keys.has("w") ? 1 : 0) - (keys.has("s") ? 1 : 0);
     const strafe = (keys.has("d") ? 1 : 0) - (keys.has("a") ? 1 : 0);
-    const lift = (keys.has("e") ? 1 : 0) - (keys.has("q") ? 1 : 0);
+    const lift = (keys.has(" ") || keys.has("e") ? 1 : 0) - (keys.has("control") || keys.has("q") ? 1 : 0);
     if (!forward && !strafe && !lift) return;
     const speed = this.scale * 0.6 * (keys.has("shift") ? 3 : 1) * seconds;
     const ahead = new THREE.Vector3().subVectors(this.pivot, this.camera.position).normalize();
