@@ -53,8 +53,13 @@ def detect_frames(paths: list[str]) -> list[list[tuple[float, float, float, floa
 
     if not torch.cuda.is_available():
         raise SystemExit("No CUDA GPU found. klecks never runs ML on the CPU; aborting.")
-    processor = Owlv2Processor.from_pretrained(MODEL)
-    model = Owlv2ForObjectDetection.from_pretrained(MODEL).to("cuda").eval()
+    try:  # the local cache first, the download only once
+        processor = Owlv2Processor.from_pretrained(MODEL, local_files_only=True)
+        model = Owlv2ForObjectDetection.from_pretrained(MODEL, local_files_only=True)
+    except Exception:
+        processor = Owlv2Processor.from_pretrained(MODEL)
+        model = Owlv2ForObjectDetection.from_pretrained(MODEL)
+    model = model.to("cuda").eval()
     out = []
     for path in paths:
         image = Image.open(path).convert("RGB")

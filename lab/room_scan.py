@@ -493,7 +493,12 @@ def main() -> int:
     # 2. the model
     progress("model", 8, "Loading the model (the first run downloads 5 GB)")
     dtype = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
-    model = VGGT.from_pretrained("facebook/VGGT-1B").to("cuda").eval()
+    # from the local cache without asking the internet; only the very first run downloads the weights
+    try:
+        model = VGGT.from_pretrained("facebook/VGGT-1B", local_files_only=True)
+    except Exception:
+        model = VGGT.from_pretrained("facebook/VGGT-1B")
+    model = model.to("cuda").eval()
     upscaler = Upscaler(args.upscale_model) if args.upscale_model else None
 
     # 3. window by window: cameras + depth, line up with the previous window, fuse into one cloud
