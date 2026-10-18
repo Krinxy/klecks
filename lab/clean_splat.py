@@ -13,6 +13,7 @@ the splats that no wall, floor or piece of furniture owns:
   haze        large and not clearly opaque
   stray       outside the room, or in a space where almost no other splat is
   runaway     a single splat much larger than the room's typical ones
+  grain       tiny and not clearly opaque: the speckle on smooth walls
 
 Plain numpy on the CPU (no ML). The file keeps its format, only rows are dropped.
 
@@ -28,6 +29,8 @@ import numpy as np
 FAINT = 0.04              # opacity (after the sigmoid) below which a splat is invisible anyway
 HAZE_OPACITY = 0.35       # larger than HAZE_SIZE x the typical splat and fainter than this: haze
 HAZE_SIZE = 6.0
+GRAIN_SIZE = 0.25         # smaller than this x the typical splat and not clearly opaque: grain, the speckle seen on flat walls
+GRAIN_OPACITY = 0.30
 RUNAWAY_SIZE = 40.0       # larger than this x the typical splat, whatever its opacity
 ROOM_PERCENTILES = (0.5, 99.5)
 ROOM_MARGIN = 0.15        # of the room's extent: splats further out are stray
@@ -69,6 +72,7 @@ def keep_mask(names: list[str], data: np.ndarray) -> tuple[np.ndarray, dict[str,
     drop("faint", opacity < FAINT)
     drop("haze", (size > HAZE_SIZE * typical) & (opacity < HAZE_OPACITY))
     drop("runaway", size > RUNAWAY_SIZE * typical)
+    drop("grain", (size < GRAIN_SIZE * typical) & (opacity < GRAIN_OPACITY))
 
     low, high = np.percentile(xyz[keep], ROOM_PERCENTILES, axis=0)
     margin = (high - low) * ROOM_MARGIN

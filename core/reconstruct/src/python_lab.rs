@@ -309,6 +309,16 @@ impl PythonLabReconstructor {
         if self.preset.lpips_weight > 0.0 {
             command.args(["--lpips-loss-weight", &self.preset.lpips_weight.to_string()]);
         }
+        for (flag, value) in [
+            ("--growth-grad-threshold", self.preset.growth_grad_threshold),
+            ("--growth-select-fraction", self.preset.growth_select_fraction),
+            ("--ssim-weight", self.preset.ssim_weight),
+            ("--mean-noise-weight", self.preset.mean_noise_weight),
+        ] {
+            if let Some(value) = value {
+                command.args([flag, &value.to_string()]);
+            }
+        }
         command
             .arg(&dataset)
             .args(["--total-steps", &steps.to_string()])

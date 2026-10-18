@@ -101,6 +101,17 @@ pub struct PresetSettings {
     /// Weight of the perceptual loss (0 = off): sharper detail at the cost of training time.
     #[serde(default)]
     pub lpips_weight: f32,
+    /// Brush growth: smaller threshold and larger fraction add splats where detail is missing. Empty = Brush default.
+    #[serde(default)]
+    pub growth_grad_threshold: Option<f32>,
+    #[serde(default)]
+    pub growth_select_fraction: Option<f32>,
+    /// Weight of the structure term in the loss (Brush default 0.2).
+    #[serde(default)]
+    pub ssim_weight: Option<f32>,
+    /// Random shake of splat positions while training (Brush default 40); less of it gives a calmer surface.
+    #[serde(default)]
+    pub mean_noise_weight: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
