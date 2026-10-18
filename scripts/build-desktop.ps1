@@ -9,7 +9,8 @@
 # in %APPDATA%\klecks. Set CARGO_TARGET_DIR to a drive with space first if you keep builds elsewhere.
 param([switch]$Debug)
 
-$ErrorActionPreference = 'Stop'
+# Cargo prints progress on stderr, which Windows PowerShell 5.1 would treat as an error: check exit codes instead.
+$ErrorActionPreference = 'Continue'
 $repo = Split-Path -Parent $PSScriptRoot
 Remove-Item Env:NO_COLOR -ErrorAction SilentlyContinue   # Trunk stops on it
 
@@ -25,7 +26,7 @@ $target = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path 
 $built = Join-Path $target ($(if ($Debug) { 'debug' } else { 'release' }) + '\klecks-app.exe')
 $copy = Join-Path ([Environment]::GetFolderPath('Desktop')) 'klecks.exe'
 try {
-    Copy-Item $built $copy -Force
+    Copy-Item $built $copy -Force -ErrorAction Stop
 } catch {
     throw "Could not write $copy. Close klecks first if it is running, then run this again."
 }
