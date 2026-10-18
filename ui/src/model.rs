@@ -78,6 +78,8 @@ pub struct VideoShare {
     pub thumb: Option<String>,
     /// Position of the film in the scan, which is also its colour on the plan.
     pub index: Option<usize>,
+    /// False when the person ticked it off for the next scan.
+    pub included: bool,
 }
 
 /// How much of the room one film saw, as estimated from the camera positions.

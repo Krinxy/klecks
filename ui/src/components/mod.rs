@@ -9,6 +9,7 @@ pub mod menu;
 pub mod placement;
 pub mod room;
 pub mod rooms;
+pub mod scan_plan;
 pub mod scan_progress;
 pub mod scene_viewer;
 pub mod screen;

@@ -9,7 +9,7 @@ use wasm_bindgen::JsValue;
 use crate::bridge::TauriBridge;
 use crate::components::{
     catalog::CatalogScreen, dropzone::DropZone, menu::MainMenu, rooms::RoomsScreen,
-    room::RoomScreen, scan_progress::ScanProgress, scene_viewer::SceneViewer, settings::SettingsScreen, stage::Stage,
+    room::RoomScreen, scan_plan::ScanPlan, scan_progress::ScanProgress, scene_viewer::SceneViewer, settings::SettingsScreen, stage::Stage,
     statusbar::StatusBar, titlebar::TitleBar,
 };
 use crate::flow::ScanFlow;
@@ -45,6 +45,10 @@ pub fn App() -> impl IntoView {
         if event.key() != "Escape" {
             return;
         }
+        if flow.pending.get_untracked().is_some() {
+            flow.cancel_ask();
+            return;
+        }
         match flow.view.get_untracked() {
             View::NewScan | View::Rooms | View::Catalog | View::Settings => flow.home(),
             View::Room(_) => flow.go(View::Rooms),
@@ -68,7 +72,7 @@ pub fn App() -> impl IntoView {
 
     view! {
         <div class="shell">
-            <TitleBar version=version />
+            <TitleBar version=version flow=flow />
             <main class="canvas">
                 {move || match flow.view.get() {
                     View::Menu => view! { <MainMenu flow=flow /> }.into_any(),
@@ -95,6 +99,7 @@ pub fn App() -> impl IntoView {
                     }.into_any(),
                 }}
             </main>
+            {move || flow.pending.get().map(|(id, label)| view! { <ScanPlan room_id=id label=label flow=flow blocker=blocker /> })}
             <StatusBar status=status />
         </div>
     }

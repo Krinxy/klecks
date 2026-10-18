@@ -42,6 +42,8 @@ pub struct VideoShare {
     thumb: Option<String>,
     /// Position of the film in the scan (its colour on the plan).
     index: Option<usize>,
+    /// False when the person ticked it off: it stays in the folder but stays out of the next scan.
+    included: bool,
 }
 
 /// One scan folder of a room, finished or not, so a stopped scan can be seen and tried again.
@@ -194,6 +196,7 @@ pub fn room_overview(state: State<AppState>, room: String) -> Result<RoomOvervie
         .map(|count| count.as_u64().unwrap_or(0) as u32)
         .collect();
     let frames: u32 = counts.iter().sum();
+    let excluded = read_excluded(&found);
     let mut videos: Vec<VideoShare> = found
         .videos
         .iter()
@@ -207,6 +210,7 @@ pub fn room_overview(state: State<AppState>, room: String) -> Result<RoomOvervie
                 share_pct: (used * 100).checked_div(frames).unwrap_or(0) as u8,
                 scanned: at.is_some(),
                 index: at,
+                included: !excluded.contains(&video.name),
                 thumb: at.and_then(|index| {
                     let frame = PathBuf::from(&scan.as_ref()?.result.scan_dir).join("frames").join(format!("{index:02}_0000.jpg"));
                     frame.is_file().then(|| frame.to_string_lossy().into_owned())
@@ -249,6 +253,18 @@ pub fn save_layout(state: State<AppState>, room: String, layout: serde_json::Val
         return Err("The layout is too large.".into());
     }
     std::fs::write(found.dir.join("layout.json"), text).map_err(|error| format!("Could not save the layout: {error}"))
+}
+
+/// Films the person left out of the next scan (`selection.json` in the room's folder).
+fn read_excluded(room: &Room) -> Vec<String> {
+    std::fs::read_to_string(room.dir.join("selection.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|value| value.get("excluded")?.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|name| name.as_str().map(str::to_owned))
+        .collect()
 }
 
 /// Doors closer than this many plan cells are the same door.
@@ -409,7 +425,7 @@ pub fn list_scans(state: State<AppState>) -> Result<Vec<ScanListItem>, String> {
 
 /// Reconstructs a room from all videos in its folder.
 #[tauri::command]
-pub fn start_room_scan(app: AppHandle, room: String) -> Result<(), String> {
+pub fn start_room_scan(app: AppHandle, room: String, videos: Option<Vec<String>>) -> Result<(), String> {
     let found = {
         let state = app.state::<AppState>();
         library(&state)?.room(&room)
@@ -418,8 +434,21 @@ pub fn start_room_scan(app: AppHandle, room: String) -> Result<(), String> {
     if found.videos.is_empty() {
         return Err(format!("{} has no videos yet. Put them in {}.", found.name, found.dir.display()));
     }
-    let videos = found.videos.iter().map(|video| video.path.clone()).collect();
-    begin_scan(app, videos, Some(found.id))
+    // The ticks of the confirmation come as a list of names and are kept for next time; without a list the
+    // saved ticks apply (a retry runs the same scan again).
+    let excluded: Vec<String> = match &videos {
+        Some(chosen) => found.videos.iter().filter(|video| !chosen.contains(&video.name)).map(|video| video.name.clone()).collect(),
+        None => read_excluded(&found),
+    };
+    let chosen: Vec<PathBuf> = found.videos.iter().filter(|video| !excluded.contains(&video.name)).map(|video| video.path.clone()).collect();
+    if chosen.is_empty() {
+        return Err("No video is ticked. Tick at least one film for the scan.".into());
+    }
+    if videos.is_some() {
+        let text = serde_json::to_string_pretty(&serde_json::json!({ "excluded": excluded })).map_err(|error| error.to_string())?;
+        std::fs::write(found.dir.join("selection.json"), text).map_err(|error| format!("Could not save the selection: {error}"))?;
+    }
+    begin_scan(app, chosen, Some(found.id))
 }
 
 fn settings_view(state: &AppState) -> Result<SettingsView, String> {

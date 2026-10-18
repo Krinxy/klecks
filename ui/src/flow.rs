@@ -15,6 +15,8 @@ pub struct ScanFlow {
     pub view: RwSignal<View>,
     pub progress: RwSignal<Option<ProgressEvent>>,
     last: RwSignal<Option<Attempt>>,
+    /// A room whose scan waits for the person's yes: (room id, name).
+    pub pending: RwSignal<Option<(String, String)>>,
 }
 
 /// What was started last, so "Try again" can start it once more.
@@ -30,6 +32,7 @@ impl ScanFlow {
             view: RwSignal::new(View::Menu),
             progress: RwSignal::new(None),
             last: RwSignal::new(None),
+            pending: RwSignal::new(None),
         }
     }
 
@@ -76,7 +79,33 @@ impl ScanFlow {
         });
     }
 
-    /// Reconstructs every video in a room of the library.
+    /// Asks which films go into the room before anything starts.
+    pub fn ask_scan(self, room_id: String, label: String) {
+        self.pending.set(Some((room_id, label)));
+    }
+
+    pub fn cancel_ask(self) {
+        self.pending.set(None);
+    }
+
+    /// Reconstructs a room with exactly these films (the ticks are remembered by the backend).
+    pub fn scan_room_with(self, room_id: String, label: String, videos: Vec<String>) {
+        self.last.set(Some(Attempt::Room(room_id.clone(), label.clone())));
+        self.progress.set(None);
+        self.view.set(View::Scanning(label));
+        leptos::task::spawn_local(async move {
+            let list = js_sys::Array::new();
+            for name in &videos {
+                list.push(&name.into());
+            }
+            let args = TauriBridge::object(&[("room", room_id.as_str().into()), ("videos", list.into())]);
+            if let Err(message) = TauriBridge::fire_with("start_room_scan", args).await {
+                self.view.set(View::Failed(message));
+            }
+        });
+    }
+
+    /// Reconstructs a room with the films ticked last time.
     pub fn scan_room(self, room_id: String, label: String) {
         self.last.set(Some(Attempt::Room(room_id.clone(), label.clone())));
         self.progress.set(None);

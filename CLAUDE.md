@@ -42,6 +42,7 @@ cargo test --workspace
 cargo run -p klecks-gpu --example detect
 cd app && cargo tauri dev
 cd app && cargo tauri build --debug --no-bundle      # quick exe without installer
+.\scriptsuild-desktop.ps1                          # release exe as one file on the desktop (-Debug for a quick one)
 ```
 
 Set `CARGO_TARGET_DIR` to a drive with space (`D:\Projects\klecks-target`); unset `NO_COLOR` for Trunk.
@@ -112,3 +113,10 @@ When running the built exe from a target dir, set `KLECKS_CONFIG_DIR`.
   adjusted per room. Reads of signals inside `sync_viewer` must stay untracked or the room screen rebuilds itself.
 - Test windows from the CDP scripts pop up on the owner's screen and react to their mouse: move them off screen first
   (SetWindowPos x=-6000) and set `KLECKS_OPEN_SCENE`/`KLECKS_AUTOSCAN` explicitly.
+- Before a room scan the person confirms which films go in (`scan_plan.rs`, ticks kept in `selection.json` of the room folder;
+  `start_room_scan` takes the names, without names the saved ticks apply, so a retry repeats the same scan). The title bar has
+  the way between screens, and shows the commit the program was built from (`app/build.rs`, `+` = uncommitted changes).
+- A program built from a checkout finds `config/` there even when copied elsewhere (`core/settings/build.rs` bakes in the
+  source path as the last place to look); media/ and lab/ are found from that config folder.
+- If the 3D view cannot be created (WebGL), `klecksViewer.mount` returns false and `lastError()` says why; never let it throw
+  into wasm, that leaves "Loading the scene" on screen for ever. viewer.js is hashed by Trunk so a webview cannot keep an old one.

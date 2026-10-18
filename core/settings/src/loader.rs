@@ -91,6 +91,13 @@ impl SettingsLoader {
             }
             cursor = dir.parent();
         }
+        // Last place: the checkout this program was built from (see build.rs).
+        if let Some(root) = option_env!("KLECKS_SOURCE_ROOT") {
+            let candidate = Path::new(root).join("config");
+            if candidate.join(MARKER_FILE).is_file() {
+                return Ok(candidate);
+            }
+        }
         Err(SettingsError::ConfigDirNotFound)
     }
 

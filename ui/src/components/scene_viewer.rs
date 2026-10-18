@@ -48,8 +48,8 @@ pub fn SceneViewer(scan: ScanResult, flow: ScanFlow, #[prop(optional)] embedded:
         );
         let path = path.clone();
         leptos::task::spawn_local(async move {
-            if !Viewer3d::mount(HOST_ID) {
-                error.set(Some("The 3D view could not start.".into()));
+            if let Err(reason) = Viewer3d::mount(HOST_ID) {
+                error.set(Some(format!("The 3D view could not start: {reason}")));
                 loading.set(false);
                 return;
             }
@@ -89,7 +89,10 @@ pub fn SceneViewer(scan: ScanResult, flow: ScanFlow, #[prop(optional)] embedded:
                         <span id="klecks-viewer-status">"Loading the scene…"</span>
                         <Show when=move || slow.get()>
                             <p class="overlay-hint">"This takes longer than usual."</p>
-                            <button class="btn btn-primary" on:click=move |_| attempt.update(|n| *n += 1)>"Try again"</button>
+                            <div class="overlay-actions">
+                                <button class="btn btn-primary" on:click=move |_| attempt.update(|n| *n += 1)>"Try again"</button>
+                                <button class="btn btn-ghost" on:click=move |_| flow.home()>"Back to the menu"</button>
+                            </div>
                         </Show>
                     </div>
                 </div>
@@ -98,7 +101,10 @@ pub fn SceneViewer(scan: ScanResult, flow: ScanFlow, #[prop(optional)] embedded:
                 <div class="viewer-overlay viewer-overlay-bad">
                     <div class="overlay-box">
                         <span>{message}</span>
-                        <button class="btn btn-primary" on:click=move |_| attempt.update(|n| *n += 1)>"Try again"</button>
+                        <div class="overlay-actions">
+                            <button class="btn btn-primary" on:click=move |_| attempt.update(|n| *n += 1)>"Try again"</button>
+                            <button class="btn btn-ghost" on:click=move |_| flow.home()>"Back to the menu"</button>
+                        </div>
                     </div>
                 </div>
             })}

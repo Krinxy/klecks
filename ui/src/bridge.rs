@@ -22,6 +22,9 @@ extern "C" {
     #[wasm_bindgen(js_namespace = ["window", "klecksViewer"], js_name = mount)]
     fn viewer_mount(id: &str) -> bool;
 
+    #[wasm_bindgen(js_namespace = ["window", "klecksViewer"], js_name = lastError)]
+    fn viewer_last_error() -> String;
+
     #[wasm_bindgen(js_namespace = ["window", "klecksViewer"], catch, js_name = load)]
     async fn viewer_load(url: &str, scene_scale: f64) -> Result<JsValue, JsValue>;
 
@@ -116,8 +119,14 @@ pub struct LoadedScene {
 pub struct Viewer3d;
 
 impl Viewer3d {
-    pub fn mount(element_id: &str) -> bool {
-        viewer_mount(element_id)
+    /// Creates the 3D view; the error says why that failed.
+    pub fn mount(element_id: &str) -> Result<(), String> {
+        if viewer_mount(element_id) {
+            Ok(())
+        } else {
+            let reason = viewer_last_error();
+            Err(if reason.is_empty() { "unknown reason".to_string() } else { reason })
+        }
     }
 
     /// Loads a scene file from disk through Tauri's asset protocol. `scene_scale` is the typical

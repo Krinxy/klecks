@@ -120,7 +120,7 @@ fn room_body(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String>>
                     <button
                         class="btn btn-primary"
                         disabled=move || !can_scan()
-                        on:click=move |_| flow.scan_room(scan_room.clone(), scan_label.clone())
+                        on:click=move |_| flow.ask_scan(scan_room.clone(), scan_label.clone())
                     >
                         {if scanned { "Scan again" } else { "Reconstruct" }}
                     </button>

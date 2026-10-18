@@ -591,3 +591,32 @@ code {
 
 .overlay-box { display: grid; gap: 14px; justify-items: center; max-width: 52ch; }
 .overlay-hint { color: var(--text-faint); font-size: 13px; }
+
+.overlay-actions { display: flex; gap: 10px; }
+.hud { z-index: 4; } /* the menu and reset buttons stay usable while the scene is loading */
+
+/* jumping between screens from the title bar */
+.topnav { display: flex; align-items: center; gap: 4px; height: 100%; padding: 0 12px; position: relative; z-index: 2; }
+.topnav-item { padding: 5px 16px; border: 0; background: rgba(255, 255, 255, 0.07); color: var(--text-dim); font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer;
+  clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%); transition: background 140ms ease, color 140ms ease; }
+.topnav-item:hover { background: rgba(255, 255, 255, 0.15); color: var(--text); }
+.topnav-item.is-current { background: var(--sage); color: var(--sage-ink); }
+.topnav-item:focus-visible { background: var(--paper); color: #0b0b0a; outline: none; }
+.back { display: none; } /* the title bar is the way back now; Esc still works */
+
+/* the question before a scan */
+.modal { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 32px; background: rgba(5, 6, 3, 0.78); }
+.modal-card { width: min(620px, 100%); max-height: calc(100vh - 80px); overflow-y: auto; }
+.modal-title { font-family: var(--display); font-size: 28px; text-transform: uppercase; overflow-wrap: anywhere; }
+.modal-text { margin: 10px 0 16px; color: var(--text-dim); line-height: 1.55; }
+.film-tools { display: flex; gap: 8px; margin-bottom: 10px; }
+.film-tools .btn { padding: 6px 16px; font-size: 13px; }
+.film-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; max-height: 38vh; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(159, 179, 80, 0.5) transparent; }
+.film { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 9px 12px; background: rgba(255, 255, 255, 0.06); cursor: pointer; }
+.film:hover { background: rgba(255, 255, 255, 0.11); }
+.film.is-off { opacity: 0.5; }
+.film input { width: 18px; height: 18px; accent-color: var(--sage); cursor: pointer; }
+.film-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.film-meta { color: var(--text-faint); font-size: 12.5px; }
+.modal-summary { margin: 16px 0 4px; font-size: 14px; color: var(--sage); font-weight: 600; line-height: 1.5; }
+.modal-actions { margin-top: 18px; display: flex; gap: 10px; }

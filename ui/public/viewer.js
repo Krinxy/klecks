@@ -28,8 +28,32 @@ class KlecksViewer {
   /** Creates the renderer inside the element with this id. */
   mount(id) {
     this.dispose();
+    this.mountError = "";
     const host = document.getElementById(id);
-    if (!host) return false;
+    if (!host) {
+      this.mountError = "The area for the 3D view is missing.";
+      return false;
+    }
+    try {
+      return this.#create(host);
+    } catch (error) {
+      // creating the WebGL view can fail on a busy or restricted graphics driver: say why instead of hanging
+      this.mountError = String(error?.message || error);
+      try {
+        this.dispose();
+      } catch (_) {
+        /* nothing left to clean */
+      }
+      return false;
+    }
+  }
+
+  /** Why the last mount failed (empty when it did not). */
+  lastError() {
+    return this.mountError || "";
+  }
+
+  #create(host) {
     this.host = host;
 
     this.renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: "high-performance" });
@@ -328,6 +352,7 @@ class KlecksViewer {
     this.resizeObserver?.disconnect();
     if (this.scene) this.#clear();
     if (this.renderer) {
+      this.renderer.forceContextLoss?.(); // hand the WebGL context back; a webview only keeps a few
       this.renderer.dispose();
       this.renderer.domElement.remove();
       this.renderer = null;

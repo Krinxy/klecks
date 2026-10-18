@@ -19,7 +19,7 @@ const FALLBACK_EXTENSIONS: [&str; 5] = ["mp4", "mov", "mkv", "webm", "avi"];
 
 #[derive(Serialize)]
 pub struct AppStatus {
-    version: &'static str,
+    version: String,
     gpu: Option<GpuInfo>,
     gpu_error: Option<String>,
     config_error: Option<String>,
@@ -51,7 +51,7 @@ pub struct ScanListItem {
 pub fn app_status(state: State<AppState>) -> AppStatus {
     let config = state.config();
     AppStatus {
-        version: env!("CARGO_PKG_VERSION"),
+        version: format!("{} {}", env!("CARGO_PKG_VERSION"), option_env!("KLECKS_BUILD").unwrap_or("")).trim().to_string(),
         gpu: state.gpu.as_ref().ok().cloned(),
         gpu_error: state.gpu.as_ref().err().cloned(),
         config_error: config.error.clone(),

@@ -5,10 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>klecks</title>
     <link data-trunk rel="css" href="styles/klecks.css" />
-    <link data-trunk rel="copy-file" href="public/viewer.js" />
     <link data-trunk rel="copy-dir" href="public/vendor" />
-    <!-- Listed before the wasm init script so window.klecksViewer exists when the UI starts. -->
-    <script type="module" src="/viewer.js"></script>
+    <!-- Listed before the wasm init script so window.klecksViewer exists when the UI starts. Trunk puts a hash in
+         the file name: the dev server sends no cache headers, and a webview that keeps an old viewer.js next to a
+         new wasm shows "Loading the scene" for ever. -->
+    <script data-trunk src="public/viewer.js" type="module" data-no-minify></script>
     <link data-trunk rel="rust" href="Cargo.toml" data-wasm-opt="z" />
   </head>
   <body></body>

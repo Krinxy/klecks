@@ -202,7 +202,7 @@ fn room_detail(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String
                     <button
                         class=if scanned { "btn btn-ghost" } else { "btn btn-primary" }
                         disabled=move || !can_scan()
-                        on:click=move |_| flow.scan_room(scan_id.clone(), scan_name.clone())
+                        on:click=move |_| flow.ask_scan(scan_id.clone(), scan_name.clone())
                     >
                         {if scanned { "Scan again" } else { "Reconstruct" }}
                     </button>
@@ -256,7 +256,7 @@ fn history_row(
                 <button
                     class="btn btn-ghost"
                     disabled=move || !has_videos || blocker.get().is_some()
-                    on:click=move |_| flow.scan_room(room_id.clone(), room_name.clone())
+                    on:click=move |_| flow.ask_scan(room_id.clone(), room_name.clone())
                 >
                     {retry_label}
                 </button>
