@@ -7,5 +7,6 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+serde_json.workspace = true
 serde.workspace = true
 serde_yaml_ng.workspace = true

@@ -56,6 +56,8 @@ pub struct Room {
     pub name: String,
     pub dir: String,
     pub videos: Vec<RoomVideo>,
+    #[serde(default)]
+    pub kind: String,
 }
 
 /// A room of the library with what has been scanned of it so far.
@@ -65,6 +67,8 @@ pub struct RoomView {
     pub total_mb: f64,
     pub scan_count: usize,
     pub latest_scan: Option<ScanListItem>,
+    #[serde(default)]
+    pub cover: Option<String>,
 }
 
 /// One film of a room and how much of the scene it gave.
@@ -222,6 +226,8 @@ pub struct RoomOverview {
     pub doors: Vec<DoorView>,
     pub other_rooms: Vec<RoomRef>,
     pub layout: Layout,
+    #[serde(default)]
+    pub cover: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]

@@ -25,6 +25,8 @@ pub struct Room {
     pub dir: PathBuf,
     pub videos: Vec<VideoFile>,
     pub total_bytes: u64,
+    /// What kind of room it is (`livingroom`, `bedroom`, `office`, ...), from `room.json`; empty when unknown.
+    pub kind: String,
 }
 
 impl Room {
@@ -48,7 +50,13 @@ impl Room {
             })
             .collect();
         videos.sort_by(|a, b| a.name.cmp(&b.name));
+        let kind = std::fs::read_to_string(dir.join("room.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .and_then(|value| value.get("kind")?.as_str().map(str::to_owned))
+            .unwrap_or_default();
         Some(Self {
+            kind,
             name: display_name(&id),
             total_bytes: videos.iter().map(|video| video.size_bytes).sum(),
             id,

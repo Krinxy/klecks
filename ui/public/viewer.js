@@ -9,7 +9,8 @@
 // Three.js and Spark (splat renderer) are vendored (ui/public/vendor) because the app runs offline.
 //
 // Controls: drag = look around, right/middle drag = pan, wheel = zoom,
-//           W A S D = walk, Space = up, Ctrl = down (Q / E too), Shift = faster, double click = reset.
+//           W A S D = walk, Space = up, Ctrl = down (Q / E too), Shift = faster, double click = reset,
+//           Alt + drag = tilt the scene if it is not level, L = level it again.
 import * as THREE from "./vendor/three.module.min.js";
 import { SparkRenderer, SplatEdit, SplatEditRgbaBlendMode, SplatEditSdf, SplatEditSdfType, SplatMesh } from "./vendor/spark.module.min.js";
 
@@ -64,6 +65,8 @@ class KlecksViewer {
     this.scene = new THREE.Scene();
     this.spark = new SparkRenderer({ renderer: this.renderer });
     this.scene.add(this.spark);
+    this.root = new THREE.Group(); // the scan and what was done to it; turned so the floor is level
+    this.scene.add(this.root);
     this.camera = new THREE.PerspectiveCamera(62, 1, 0.01, 500);
     this.pivot = new THREE.Vector3(0, 0, -1);
     this.radius = 1;
@@ -88,6 +91,7 @@ class KlecksViewer {
   async load(url, sceneScale) {
     if (!this.renderer) throw new Error("viewer is not mounted");
     const id = (this.loadId = (this.loadId || 0) + 1);
+    this.sceneKey = String(url).split('?')[0];
     const timings = (this.timings = { startedAt: performance.now() });
     this.#startTicker();
     try {
@@ -189,13 +193,13 @@ class KlecksViewer {
   #clear() {
     this.#dropLayout();
     if (this.cloud) {
-      this.scene.remove(this.cloud);
+      this.root.remove(this.cloud);
       this.cloud.geometry.dispose();
       this.cloud.material.dispose();
       this.cloud = null;
     }
     if (this.splats) {
-      this.scene.remove(this.splats);
+      this.root.remove(this.splats);
       this.splats.dispose?.();
       this.splats = null;
     }
@@ -215,9 +219,11 @@ class KlecksViewer {
     }
     this.timings.prepareMs = Math.round(performance.now() - prepared);
     splats.rotation.x = Math.PI; // the model's y axis points down; flip so up is up
-    this.scene.add(splats);
+    this.root.add(splats);
     this.splats = splats;
     this.scale = Math.max(Number(sceneScale) || 0.7, 0.05);
+    this.#loadTrim();
+    this.#alignRoot();
     this.resetView();
     return { kind: "splats", count: splats.numSplats ?? 0 };
   }
@@ -236,8 +242,10 @@ class KlecksViewer {
     this.cloud = new THREE.Points(geometry, material);
     this.cloud.frustumCulled = false;
     this.cloud.rotation.x = Math.PI; // the model's y axis points down; flip so up is up
-    this.scene.add(this.cloud);
+    this.root.add(this.cloud);
 
+    this.#loadTrim();
+    this.#alignRoot();
     this.resetView();
     return { kind: "points", count };
   }
@@ -252,13 +260,55 @@ class KlecksViewer {
     this.#applyLayout();
   }
 
+  /** The spot on the floor under a pixel of the view, in the scan's coordinates; null when the pointer is not over the floor. */
+  floorPoint(clientX, clientY) {
+    const layout = this.layout;
+    if (!this.renderer || !layout?.floor || !layout.frame) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -(((clientY - rect.top) / rect.height) * 2 - 1));
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, this.camera);
+    this.root.updateMatrixWorld(true);
+    // scan coordinates -> the scene's world: flip (y down) and the root's levelling
+    const point = new THREE.Vector3(layout.floor[0], -layout.floor[1], -layout.floor[2]);
+    this.root.localToWorld(point);
+    const normal = new THREE.Vector3(layout.frame.up[0], -layout.frame.up[1], -layout.frame.up[2]).applyQuaternion(this.root.quaternion).normalize();
+    const hit = ray.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(normal, point), new THREE.Vector3());
+    if (!hit) return null;
+    this.root.worldToLocal(hit);
+    return [hit.x, -hit.y, -hit.z];
+  }
+
+  /** The spot on the floor in the middle of the view. */
+  floorCenter() {
+    if (!this.renderer) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    return this.floorPoint(rect.left + rect.width / 2, rect.top + rect.height * 0.62);
+  }
+
+  /** Which placed piece is under a pixel (index in the layout's items), or -1. */
+  pieceAt(clientX, clientY) {
+    if (!this.renderer || !this.pieces?.length) return -1;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -(((clientY - rect.top) / rect.height) * 2 - 1));
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, this.camera);
+    this.root.updateMatrixWorld(true);
+    const hits = ray.intersectObjects(this.pieces, false);
+    return hits.length ? hits[0].object.userData.index : -1;
+  }
+
+  #tell(detail) {
+    window.dispatchEvent(new CustomEvent("klecks-piece", { detail }));
+  }
+
   #dropLayout() {
     if (this.proxies) {
       this.proxies.traverse((object) => {
         object.geometry?.dispose?.();
         object.material?.dispose?.();
       });
-      this.scene.remove(this.proxies);
+      this.root.remove(this.proxies);
       this.proxies = null;
     }
     if (this.cutEdit) {
@@ -288,11 +338,14 @@ class KlecksViewer {
     }
     const group = new THREE.Group();
     group.rotation.x = Math.PI; // same flip as the scene: its y axis points down
-    for (const item of layout.items || []) {
+    this.pieces = [];
+    (layout.items || []).forEach((item, index) => {
       const box = new THREE.Mesh(
         new THREE.BoxGeometry(1, 1, 1),
-        new THREE.MeshBasicMaterial({ color: item.selected ? 0xe6f19a : 0x9fb350, transparent: true, opacity: item.selected ? 0.5 : 0.32, depthWrite: false }),
+        new THREE.MeshBasicMaterial({ color: item.selected ? 0xe6f19a : 0x9fb350, transparent: true, opacity: item.image ? (item.selected ? 0.22 : 0.1) : item.selected ? 0.5 : 0.32, depthWrite: false }),
       );
+      box.userData.index = index;
+      this.pieces.push(box);
       const edges = new THREE.LineSegments(
         new THREE.EdgesGeometry(box.geometry),
         new THREE.LineBasicMaterial({ color: item.selected ? 0xffffff : 0xd7e68a }),
@@ -301,9 +354,28 @@ class KlecksViewer {
       box.position.set(...item.pos);
       box.scale.set(...item.size);
       box.quaternion.copy(this.#boxTurn(layout.frame, item.turn || 0));
+      if (item.image) {
+        // the catalog picture on a card in the middle of the footprint, as wide and tall as the piece
+        const loader = new THREE.TextureLoader();
+        loader.setCrossOrigin("anonymous");
+        const card = new THREE.Mesh(
+          new THREE.PlaneGeometry(1, 1),
+          new THREE.MeshBasicMaterial({ transparent: true, side: THREE.DoubleSide, depthWrite: false, opacity: 0 }),
+        );
+        loader.load(item.image, (texture) => {
+          texture.colorSpace = THREE.SRGBColorSpace;
+          card.material.map = texture;
+          card.material.opacity = 1;
+          card.material.needsUpdate = true;
+          this.dirty = true;
+        });
+        card.userData.index = index;
+        this.pieces.push(card);
+        box.add(card);
+      }
       group.add(box);
-    }
-    this.scene.add(group);
+    });
+    this.root.add(group);
     this.proxies = group;
 
     if (this.splats && (layout.cuts || []).length) {
@@ -333,11 +405,80 @@ class KlecksViewer {
 
   /** Back to the position the video was filmed from. */
   resetView() {
-    this.yaw = 0;
-    this.pitch = 0;
     this.radius = this.scale * 0.6;
-    this.pivot.set(0, 0, -this.radius);
+    // Back to where the first film was shot from, looking the way it looked (levelled with the floor).
+    const forward = new THREE.Vector3(0, 0, -1);
+    if (this.root) forward.applyQuaternion(this.root.quaternion);
+    this.pitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, Math.asin(Math.max(-1, Math.min(1, -forward.y)))));
+    this.yaw = Math.atan2(-forward.x, -forward.z);
+    this.pivot.copy(forward).multiplyScalar(this.radius);
     this.#apply();
+  }
+
+  /**
+   * Which way is up in the scan's own coordinates (the floor's normal, from the floor plan). The scan comes
+   * out of the reconstruction tilted by however the phone was held; this turns it so the floor is level.
+   */
+  setUp(up) {
+    this.up = Array.isArray(up) && up.length === 3 ? up : null;
+    this.#alignRoot();
+  }
+
+  #alignRoot() {
+    if (!this.root) return;
+    const align = new THREE.Quaternion();
+    if (this.up) {
+      // the scan's y axis points down (flipped by the scene itself), so its up vector flips with it
+      const up = new THREE.Vector3(this.up[0], -this.up[1], -this.up[2]).normalize();
+      align.setFromUnitVectors(up, new THREE.Vector3(0, 1, 0));
+    }
+    this.root.quaternion.copy(this.trimQ || new THREE.Quaternion()).multiply(align);
+    this.dirty = true;
+  }
+
+  /** Alt + drag tilts the scene a little when the automatic levelling is off; L puts it back. */
+  #trim(dx, dy) {
+    const forward = new THREE.Vector3();
+    this.camera.getWorldDirection(forward);
+    forward.y = 0;
+    if (forward.lengthSq() < 1e-6) return;
+    forward.normalize();
+    const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+    const turn = new THREE.Quaternion()
+      .setFromAxisAngle(forward, dx * 0.0015)
+      .multiply(new THREE.Quaternion().setFromAxisAngle(right, dy * 0.0015));
+    this.trimQ = turn.multiply(this.trimQ || new THREE.Quaternion());
+    this.#alignRoot();
+    this.#saveTrim();
+  }
+
+  resetLevel() {
+    this.trimQ = null;
+    this.#alignRoot();
+    this.#saveTrim();
+  }
+
+  #trimKey() {
+    return `klecks-level:${this.sceneKey || ""}`;
+  }
+
+  #saveTrim() {
+    try {
+      if (this.trimQ) localStorage.setItem(this.#trimKey(), JSON.stringify(this.trimQ.toArray()));
+      else localStorage.removeItem(this.#trimKey());
+    } catch (_) {
+      /* storage can be blocked: the trim then only lasts for this view */
+    }
+  }
+
+  #loadTrim() {
+    this.trimQ = null;
+    try {
+      const saved = JSON.parse(localStorage.getItem(this.#trimKey()) || "null");
+      if (Array.isArray(saved) && saved.length === 4) this.trimQ = new THREE.Quaternion().fromArray(saved);
+    } catch (_) {
+      /* nothing saved, or unreadable */
+    }
   }
 
   dispose() {
@@ -394,7 +535,14 @@ class KlecksViewer {
     let drag = null;
     this.#on(canvas, "contextmenu", (event) => event.preventDefault());
     this.#on(canvas, "pointerdown", (event) => {
-      drag = { x: event.clientX, y: event.clientY, pan: event.button !== 0 };
+      drag = { x: event.clientX, y: event.clientY, pan: event.button !== 0, trim: event.button === 0 && event.altKey };
+      if (event.button === 0 && !event.altKey) {
+        const piece = this.pieceAt(event.clientX, event.clientY);
+        if (piece >= 0) {
+          drag.piece = piece; // dragging a placed piece moves it over the floor instead of turning the view
+          this.#tell({ kind: "select", index: piece });
+        }
+      }
       canvas.setPointerCapture(event.pointerId);
     });
     this.#on(canvas, "pointermove", (event) => {
@@ -403,6 +551,15 @@ class KlecksViewer {
       const dy = event.clientY - drag.y;
       drag.x = event.clientX;
       drag.y = event.clientY;
+      if (drag.piece !== undefined) {
+        const point = this.floorPoint(event.clientX, event.clientY);
+        if (point) this.#tell({ kind: "move", index: drag.piece, point });
+        return;
+      }
+      if (drag.trim) {
+        this.#trim(dx, dy);
+        return;
+      }
       if (drag.pan) {
         const step = this.radius * 0.0016;
         const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrix, 0);
@@ -414,7 +571,10 @@ class KlecksViewer {
       }
       this.#apply();
     });
-    const release = () => (drag = null);
+    const release = () => {
+      if (drag?.piece !== undefined) this.#tell({ kind: "done", index: drag.piece });
+      drag = null;
+    };
     this.#on(canvas, "pointerup", release);
     this.#on(canvas, "pointercancel", release);
     this.#on(canvas, "wheel", (event) => {
@@ -428,6 +588,7 @@ class KlecksViewer {
     this.#on(window, "keydown", (event) => {
       if (typing(event)) return;
       if (event.key === " ") event.preventDefault();
+      if (event.key.toLowerCase() === "l" && !event.ctrlKey && !event.metaKey) this.resetLevel();
       this.keys.add(event.key.toLowerCase());
     });
     this.#on(window, "keyup", (event) => {

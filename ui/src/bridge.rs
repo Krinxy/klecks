@@ -36,6 +36,15 @@ extern "C" {
 
     #[wasm_bindgen(js_namespace = ["window", "klecksViewer"], js_name = setLayout)]
     fn viewer_set_layout(layout: &JsValue);
+
+    #[wasm_bindgen(js_namespace = ["window", "klecksViewer"], js_name = setUp)]
+    fn viewer_set_up(up: &JsValue);
+
+    #[wasm_bindgen(js_namespace = ["window", "klecksViewer"], js_name = floorPoint)]
+    fn viewer_floor_point(x: f64, y: f64) -> JsValue;
+
+    #[wasm_bindgen(js_namespace = ["window", "klecksViewer"], js_name = floorCenter)]
+    fn viewer_floor_center() -> JsValue;
 }
 
 pub struct TauriBridge;
@@ -153,6 +162,23 @@ impl Viewer3d {
 
     pub fn dispose() {
         viewer_dispose();
+    }
+
+    /// The spot on the floor (scan coordinates) under a pixel of the window, if the pointer is over the floor.
+    pub fn floor_point(client_x: f64, client_y: f64) -> Option<[f64; 3]> {
+        serde_wasm_bindgen::from_value(viewer_floor_point(client_x, client_y)).ok().flatten()
+    }
+
+    /// The spot on the floor in the middle of the view.
+    pub fn floor_center() -> Option<[f64; 3]> {
+        serde_wasm_bindgen::from_value(viewer_floor_center()).ok().flatten()
+    }
+
+    /// Tells the view which way is up in the scan, so the floor is level.
+    pub fn set_up(up: [f64; 3]) {
+        if let Ok(value) = serde_wasm_bindgen::to_value(&up) {
+            viewer_set_up(&value);
+        }
     }
 
     /// Shows furniture boxes and hidden parts in the scene (see `setLayout` in viewer.js).

@@ -6,7 +6,8 @@
 use leptos::prelude::*;
 
 use crate::bridge::TauriBridge;
-use crate::components::placement::{furniture_panel, plan_layer, point_in_plan, Placement, Tool};
+use crate::components::placement::{freecam_sidebar, furniture_panel, plan_layer, point_in_plan, Placement, Tool};
+use crate::components::room_picture::add_videos_flow;
 use crate::components::scene_viewer::SceneViewer;
 use crate::components::stage::Stage;
 use crate::flow::ScanFlow;
@@ -41,6 +42,18 @@ enum Side {
 pub fn RoomScreen(id: String, flow: ScanFlow, #[prop(into)] blocker: Signal<Option<String>>) -> impl IntoView {
     let overview = RwSignal::new(None::<Result<RoomOverview, String>>);
     let pane = RwSignal::new(Pane::Plan);
+    // Esc: out of the free camera, then out of the room.
+    let escape = window_event_listener(leptos::ev::keydown, move |event| {
+        if event.key() != "Escape" || flow.pending.get_untracked().is_some() {
+            return;
+        }
+        if pane.get_untracked() == Pane::Camera {
+            pane.set(Pane::Plan);
+        } else {
+            flow.go(View::Rooms);
+        }
+    });
+    on_cleanup(move || escape.remove());
     {
         let id = id.clone();
         leptos::task::spawn_local(async move {
@@ -95,11 +108,20 @@ fn room_body(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String>>
     let next_best = data.plan.as_ref().and_then(|plan| plan.thin.as_ref()).map(thin_hint);
     let can_scan = move || has_videos && blocker.get().is_none();
     let scan_room = room_id.clone();
+    let add_room = room_id.clone();
     let scan_label = room_name.clone();
     let doors = RwSignal::new(data.doors.clone());
     let plan_size = data.plan.as_ref().map(|plan| (plan.width as f64, plan.height as f64)).unwrap_or((0.0, 0.0));
     let placement = Placement::new(room_id.clone(), data.layout.clone(), data.plan.as_ref().and_then(|plan| plan.transform.clone()), plan_size);
     let side = RwSignal::new(Side::Media);
+    let wide = RwSignal::new(false);
+    // the 3D view reports pieces that were picked or dragged
+    let pieces = window_event_listener_untyped("klecks-piece", move |event| {
+        if let Ok(detail) = js_sys::Reflect::get(&event, &"detail".into()) {
+            placement.piece_event(&detail);
+        }
+    });
+    on_cleanup(move || pieces.remove());
     let other_rooms = data.other_rooms.clone();
     let plan_room = room_id.clone();
     let list_room = room_id.clone();
@@ -113,8 +135,13 @@ fn room_body(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String>>
                 </div>
                 <div class="room-head-actions">
                     <button class="btn btn-ghost" on:click=move |_| {
-                        leptos::task::spawn_local(async {
-                            let _ = TauriBridge::fire_with("reveal_folder", TauriBridge::map(&[("kind", "rooms")])).await;
+                        let room = add_room.clone();
+                        let again = room.clone();
+                        add_videos_flow(room, move |result| {
+                            if result.is_ok() {
+                                flow.go(View::Rooms);
+                                flow.go(View::Room(again));
+                            }
                         });
                     }>"Add videos"</button>
                     <button
@@ -128,7 +155,7 @@ fn room_body(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String>>
             </header>
             {move || (has_videos).then(|| blocker.get()).flatten().map(|reason| view! { <p class="room-blocker room-blocker-wide">{reason}</p> })}
 
-            <div class="room-grid">
+            <div class="room-grid" class:is-wide=move || wide.get() && pane.get() == Pane::Camera>
                 <section class="panel panel-view">
                     <div class="tabs" role="tablist">
                         <button class="tab" class:is-selected=move || pane.get() == Pane::Plan role="tab" on:click=move |_| pane.set(Pane::Plan)>"Floor plan"</button>
@@ -144,7 +171,22 @@ fn room_body(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String>>
                         {move || match (pane.get(), scan_result.clone()) {
                             (Pane::Camera, Some(scan)) => {
                                 placement.sync_viewer();
-                                view! { <SceneViewer scan=scan flow=flow embedded=true /> }.into_any()
+                                view! {
+                                    <div
+                                        class="freecam"
+                                        on:dragover=move |event| event.prevent_default()
+                                        on:drop=move |event| {
+                                            event.prevent_default();
+                                            if let Some(asset) = placement.dragging.get_untracked() {
+                                                placement.dragging.set(None);
+                                                placement.drop_at(&asset, (event.client_x() as f64, event.client_y() as f64));
+                                            }
+                                        }
+                                    >
+                                        <SceneViewer scan=scan flow=flow embedded=true wide=wide />
+                                        {freecam_sidebar(placement)}
+                                    </div>
+                                }.into_any()
                             }
                             _ => plan_view(plan.clone(), scanned, doors, placement, plan_room.clone()).into_any(),
                         }}

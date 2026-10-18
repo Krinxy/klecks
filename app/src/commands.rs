@@ -212,6 +212,19 @@ pub fn all_scans(paths: &AppPaths) -> Vec<ScanListItem> {
     scans
 }
 
+/// Which way is up in a scan (the floor's normal from its plan), so the viewer can level it.
+#[tauri::command]
+pub fn scan_orientation(dir: String, state: State<AppState>) -> Option<[f64; 3]> {
+    let scans = state.config().paths.as_ref()?.scans.clone();
+    let requested = std::fs::canonicalize(&dir).ok()?;
+    if !requested.starts_with(std::fs::canonicalize(&scans).ok()?) {
+        return None;
+    }
+    let plan: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(requested.join("plan.json")).ok()?).ok()?;
+    let up = plan.get("transform")?.get("up")?.as_array()?;
+    Some([up.first()?.as_f64()?, up.get(1)?.as_f64()?, up.get(2)?.as_f64()?])
+}
+
 /// Opens a scan folder, but only from inside the scans directory.
 #[tauri::command]
 pub fn open_scan(dir: String, state: State<AppState>) -> Result<ScanResult, String> {

@@ -25,6 +25,8 @@ pub struct RoomView {
     total_mb: f64,
     scan_count: usize,
     latest_scan: Option<ScanListItem>,
+    /// A picture of the room if one was made already (see `room_cover`).
+    cover: Option<String>,
 }
 
 /// One film of a room and how much of the latest scan came from it.
@@ -104,6 +106,7 @@ pub struct RoomOverview {
     other_rooms: Vec<RoomRef>,
     /// Furniture placed in the room and areas cut out of the scan (`layout.json` in the room's folder).
     layout: serde_json::Value,
+    cover: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -158,6 +161,7 @@ pub fn list_rooms(state: State<AppState>) -> Result<Vec<RoomView>, String> {
                 total_mb: room.total_bytes as f64 / (1024.0 * 1024.0),
                 scan_count: latest_scan.iter().count() + own.count(),
                 latest_scan,
+                cover: existing_cover(&room),
                 room,
             }
         })
@@ -229,7 +233,137 @@ pub fn room_overview(state: State<AppState>, room: String) -> Result<RoomOvervie
         .map(|other| RoomRef { id: other.id, name: other.name })
         .collect();
     let layout = read_layout(&found);
-    Ok(RoomOverview { room: found, scan, videos, frames, plan, history, doors, other_rooms, layout })
+    let cover = existing_cover(&found);
+    Ok(RoomOverview { room: found, scan, videos, frames, plan, history, doors, other_rooms, layout, cover })
+}
+
+const COVER_FILE: &str = "cover.jpg";
+const COVER_WIDTH: u32 = 900;
+/// The kinds of room the "+" offers; anything else is stored as "other".
+const ROOM_KINDS: [&str; 8] = ["livingroom", "bedroom", "office", "kitchen", "hallway", "bathroom", "dining", "other"];
+const MAX_ROOM_NAME: usize = 40;
+/// Same colour mapping as the lab script: HDR phone films would look grey without it.
+const COVER_TONEMAP: &str = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p";
+
+fn existing_cover(room: &Room) -> Option<String> {
+    let path = room.dir.join(COVER_FILE);
+    path.is_file().then(|| path.to_string_lossy().into_owned())
+}
+
+/// A picture of the room for the menu and the lists: a frame from its latest scan, else one cut from its first
+/// film. Made once and kept as `cover.jpg` in the room's folder (delete the file to get a new one).
+#[tauri::command(async)]
+pub async fn room_cover(state: State<'_, AppState>, room: String) -> Result<Option<String>, String> {
+    let found = library(&state)?.room(&room).ok_or("That room does not exist.")?;
+    if let Some(done) = existing_cover(&found) {
+        return Ok(Some(done));
+    }
+    // a middle frame of the scan's longest film is already upright and tone-mapped
+    let scan_frame = state
+        .config()
+        .paths
+        .as_ref()
+        .map(all_scans)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|scan| scan.room == found.id)
+        .and_then(|scan| {
+            let mut frames: Vec<PathBuf> = std::fs::read_dir(PathBuf::from(&scan.result.scan_dir).join("frames"))
+                .ok()?
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .collect();
+            frames.sort();
+            frames.get(frames.len() / 2).cloned()
+        });
+    let first_video = found.videos.iter().max_by_key(|video| video.size_bytes).map(|video| video.path.clone());
+    let target = found.dir.join(COVER_FILE);
+    let made = tauri::async_runtime::spawn_blocking(move || {
+        let scale = format!("scale={COVER_WIDTH}:-2");
+        let run = |input: &PathBuf, seek: &str, filter: &str| {
+            Command::new("ffmpeg")
+                .args(["-v", "error", "-y", "-ss", seek, "-i"])
+                .arg(input)
+                .args(["-frames:v", "1", "-vf", filter, "-q:v", "3"])
+                .arg(&target)
+                .output()
+                .map(|output| output.status.success() && target.is_file())
+                .unwrap_or(false)
+        };
+        if let Some(frame) = scan_frame {
+            if run(&frame, "0", &scale) {
+                return true;
+            }
+        }
+        match first_video {
+            Some(video) => run(&video, "2", &format!("{scale},{COVER_TONEMAP}")) || run(&video, "2", &scale),
+            None => false,
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(made.then(|| found.dir.join(COVER_FILE).to_string_lossy().into_owned()))
+}
+
+/// Makes a new room: a folder in `media/rooms/` with its kind. The name becomes the folder name.
+#[tauri::command]
+pub fn create_room(state: State<AppState>, name: String, kind: String) -> Result<String, String> {
+    let clean: String = name
+        .trim()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '_')
+        .collect::<String>()
+        .trim()
+        .replace(' ', "_");
+    if clean.is_empty() || clean.chars().count() > MAX_ROOM_NAME {
+        return Err(format!("Give the room a name of 1 to {MAX_ROOM_NAME} letters, numbers or spaces."));
+    }
+    let rooms = library(&state)?.rooms_dir();
+    let dir = rooms.join(&clean);
+    if dir.exists() {
+        return Err("A room with that name exists already.".into());
+    }
+    std::fs::create_dir_all(&dir).map_err(|error| format!("Could not make the room: {error}"))?;
+    let kind = if ROOM_KINDS.contains(&kind.as_str()) { kind } else { "other".to_string() };
+    std::fs::write(dir.join("room.json"), serde_json::json!({ "kind": kind }).to_string())
+        .map_err(|error| format!("Could not save the room: {error}"))?;
+    Ok(clean)
+}
+
+/// Copies films into a room's folder (the originals stay where they are). Returns how many were added.
+#[tauri::command(async)]
+pub async fn add_videos(state: State<'_, AppState>, room: String, paths: Vec<String>) -> Result<usize, String> {
+    let found = library(&state)?.room(&room).ok_or("That room does not exist.")?;
+    let extensions = state
+        .config()
+        .settings
+        .as_ref()
+        .map(|settings| settings.capture.extensions.clone())
+        .unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut added = 0;
+        for source in paths.iter().map(PathBuf::from) {
+            let ok = source.is_file()
+                && source
+                    .extension()
+                    .map(|ext| ext.to_string_lossy().to_ascii_lowercase())
+                    .is_some_and(|ext| extensions.contains(&ext));
+            let Some(file_name) = source.file_name().filter(|_| ok) else { continue };
+            let mut target = found.dir.join(file_name);
+            let mut copy = 1;
+            while target.exists() {
+                let stem = source.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                let ext = source.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
+                target = found.dir.join(format!("{stem}_{copy}.{ext}"));
+                copy += 1;
+            }
+            std::fs::copy(&source, &target).map_err(|error| format!("Could not copy {}: {error}", source.display()))?;
+            added += 1;
+        }
+        Ok(added)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn read_layout(room: &Room) -> serde_json::Value {

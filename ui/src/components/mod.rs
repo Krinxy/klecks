@@ -8,6 +8,7 @@ pub mod dropzone;
 pub mod menu;
 pub mod placement;
 pub mod room;
+pub mod room_picture;
 pub mod rooms;
 pub mod scan_plan;
 pub mod scan_progress;

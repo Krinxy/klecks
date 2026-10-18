@@ -17,7 +17,8 @@ pub fn refresh_asset_scope(app: &tauri::AppHandle) {
     let config = state.config();
     let Some(paths) = config.paths.as_ref() else { return };
     let scope = app.asset_protocol_scope();
-    for folder in [paths.scans.clone(), paths.media.join("assets")] {
+    // The pictures of the rooms (covers) are read from the rooms folder as well.
+    for folder in [paths.scans.clone(), paths.media.join("assets"), paths.media.join("rooms")] {
         if let Err(error) = scope.allow_directory(&folder, true) {
             eprintln!("klecks: cannot allow {}: {error}", folder.display());
         }
@@ -45,8 +46,12 @@ pub fn run() {
             commands::start_reconstruction,
             commands::cancel_reconstruction,
             commands::open_scan,
+            commands::scan_orientation,
             library_commands::list_rooms,
             library_commands::room_overview,
+            library_commands::create_room,
+            library_commands::add_videos,
+            library_commands::room_cover,
             library_commands::set_door,
             library_commands::save_layout,
             library_commands::apartment,

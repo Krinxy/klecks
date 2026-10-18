@@ -5,7 +5,7 @@
 // ---
 use leptos::prelude::*;
 use serde::Serialize;
-use wasm_bindgen::JsValue;
+use wasm_bindgen::{JsCast, JsValue};
 
 use crate::bridge::{TauriBridge, Viewer3d};
 use crate::format::capitalised;
@@ -39,6 +39,8 @@ pub struct Placement {
     pub selected: RwSignal<Option<u32>>,
     pub tool: RwSignal<Tool>,
     pub assets: RwSignal<Vec<Asset>>,
+    /// The catalog card being dragged towards the 3D view.
+    pub dragging: RwSignal<Option<String>>,
     /// (item, grab offset in cells) while an item is dragged.
     drag: RwSignal<Option<(u32, f64, f64)>>,
     /// The rectangle being drawn for a cut-out: (x0, y0, x1, y1).
@@ -55,6 +57,7 @@ impl Placement {
             selected: RwSignal::new(None),
             tool: RwSignal::new(Tool::None),
             assets: RwSignal::new(Vec::new()),
+            dragging: RwSignal::new(None),
             drag: RwSignal::new(None),
             sketch: RwSignal::new(None),
             plan_size: StoredValue::new(plan_size),
@@ -94,11 +97,83 @@ impl Placement {
         self.assets.with(|list| list.iter().find(|candidate| candidate.id == asset).map(|found| found.name.clone())).unwrap_or_else(|| capitalised(asset))
     }
 
+    /// The catalog picture of a piece (the one named front, else the first), as an address the view can load.
+    fn image_of(&self, asset: &str) -> Option<String> {
+        self.assets.with_untracked(|list| {
+            let found = list.iter().find(|candidate| candidate.id == asset)?;
+            let path = found.images.iter().find(|path| path.to_lowercase().contains("front")).or_else(|| found.images.first())?;
+            Some(TauriBridge::file_url(path))
+        })
+    }
+
+    /// Where a spot of the scan lies on the plan, in cells.
+    fn cell_of_world(&self, point: [f64; 3]) -> Option<(f64, f64)> {
+        let transform = self.transform.get_value()?;
+        if transform.basis.len() != 3 || transform.scale <= 0.0 {
+            return None;
+        }
+        let across = |index: usize| (0..3).map(|row| transform.basis[row][index] * point[row]).sum::<f64>();
+        Some(((across(0) - transform.low[0]) * transform.scale, (across(1) - transform.low[1]) * transform.scale))
+    }
+
+    /// Puts a piece where it was dropped on the floor of the 3D view.
+    pub fn drop_at(&self, asset: &str, client: (f64, f64)) {
+        match Viewer3d::floor_point(client.0, client.1).and_then(|point| self.cell_of_world(point)) {
+            Some(cell) => self.place_at(asset, cell),
+            None => self.place(asset),
+        }
+    }
+
+    /// Puts a piece on the floor in the middle of the 3D view (a click on a card of the catalog).
+    pub fn place_in_view(&self, asset: &str) {
+        match Viewer3d::floor_center().and_then(|point| self.cell_of_world(point)) {
+            Some(cell) => self.place_at(asset, cell),
+            None => self.place(asset),
+        }
+    }
+
+    /// What the 3D view says about the pieces: one was picked, is being dragged over the floor, or was let go.
+    pub fn piece_event(&self, detail: &JsValue) {
+        let field = |name: &str| js_sys::Reflect::get(detail, &name.into()).unwrap_or(JsValue::UNDEFINED);
+        let kind = field("kind").as_string().unwrap_or_default();
+        let index = field("index").as_f64().map(|value| value as usize);
+        let id = index.and_then(|index| self.layout.with_untracked(|layout| layout.items.get(index).map(|item| item.id)));
+        let Some(id) = id else { return };
+        match kind.as_str() {
+            "select" => {
+                self.selected.set(Some(id));
+                self.sync_viewer();
+            }
+            "move" => {
+                let point: Option<[f64; 3]> = serde_wasm_bindgen::from_value(field("point")).ok();
+                if let Some((x, y)) = point.and_then(|point| self.cell_of_world(point)) {
+                    let (width, height) = self.plan_size.get_value();
+                    self.layout.update(|layout| {
+                        if let Some(item) = layout.items.iter_mut().find(|item| item.id == id) {
+                            item.x = x.clamp(0.0, width);
+                            item.y = y.clamp(0.0, height);
+                        }
+                    });
+                    self.sync_viewer();
+                }
+            }
+            "done" => self.changed(),
+            _ => {}
+        }
+    }
+
     /// Puts a piece in the middle of the plan and selects it.
     pub fn place(&self, asset: &str) {
         let (width, height) = self.plan_size.get_value();
+        self.place_at(asset, (width / 2.0, height / 2.0));
+    }
+
+    /// Puts a piece at a spot of the plan and selects it.
+    pub fn place_at(&self, asset: &str, cell: (f64, f64)) {
+        let (width, height) = self.plan_size.get_value();
         let id = self.layout.with(|layout| layout.items.iter().map(|item| item.id).max().unwrap_or(0) + 1);
-        self.layout.update(|layout| layout.items.push(Placed { id, asset: asset.to_string(), x: width / 2.0, y: height / 2.0, turn: 0.0 }));
+        let (x, y) = (cell.0.clamp(0.0, width), cell.1.clamp(0.0, height));
+        self.layout.update(|layout| layout.items.push(Placed { id, asset: asset.to_string(), x, y, turn: 0.0 }));
         self.selected.set(Some(id));
         self.changed();
     }
@@ -209,6 +284,7 @@ impl Placement {
                     size: [width * per_cm, height * per_cm, depth * per_cm],
                     turn: item.turn,
                     selected: selected == Some(item.id),
+                    image: self.image_of(&item.asset),
                 }
             })
             .collect();
@@ -222,11 +298,14 @@ impl Placement {
                     size: [cut.w / transform.scale, reach, cut.h / transform.scale],
                     turn: 0.0,
                     selected: false,
+                    image: None,
                 }
             })
             .collect();
         let column = |index: usize| [transform.basis[0][index], transform.basis[1][index], transform.basis[2][index]];
-        Some(ViewerLayout { frame: ViewerFrame { a: column(0), b: column(1), up: transform.up }, items, cuts })
+        let (plan_width, plan_height) = self.plan_size.get_value();
+        let floor = world(&transform, plan_width / 2.0, plan_height / 2.0, 0.0);
+        Some(ViewerLayout { floor, frame: ViewerFrame { a: column(0), b: column(1), up: transform.up }, items, cuts })
     }
 
     // ── pointer handling on the plan ──────────────────────────────────────────────────────────
@@ -296,10 +375,15 @@ struct ViewerBox {
     size: [f64; 3],
     turn: f64,
     selected: bool,
+    /// The catalog picture shown on the piece.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image: Option<String>,
 }
 
 #[derive(Serialize)]
 struct ViewerLayout {
+    /// Any point on the floor: with `frame.up` it is the floor plane the pointer is cast onto.
+    floor: [f64; 3],
     frame: ViewerFrame,
     items: Vec<ViewerBox>,
     cuts: Vec<ViewerBox>,
@@ -502,5 +586,91 @@ pub fn furniture_panel(placement: Placement) -> impl IntoView {
             <button class="btn btn-ghost" on:click=move |_| placement.rescale(Some(placement.scale_step_up()))>"Larger"</button>
             <button class="btn btn-ghost" on:click=move |_| placement.rescale(None)>"Use the estimate"</button>
         </div>
+    }
+}
+
+/// The catalog as a sidebar over the free camera: click a card to put the piece in the middle of the view, or drag
+/// it into the room and let go where it should stand. A placed piece can be dragged around in the room too.
+pub fn freecam_sidebar(placement: Placement) -> impl IntoView {
+    let open = RwSignal::new(true);
+    let query = RwSignal::new(String::new());
+    view! {
+        <aside class="freecam-side" class:is-closed=move || !open.get()>
+            <button class="side-toggle" on:click=move |_| open.update(|on| *on = !*on) title="Show or hide the catalog">
+                {move || if open.get() { "Catalog >" } else { "< Catalog" }}
+            </button>
+            <div class="side-content" hidden=move || !open.get()>
+                <input
+                    class="input"
+                    type="search"
+                    placeholder="Search the catalog"
+                    spellcheck="false"
+                    prop:value=move || query.get()
+                    on:input=move |event| query.set(event_target_value(&event))
+                />
+                {move || (!placement.can_place()).then(|| view! {
+                    <p class="side-note">"Scan this room again to place furniture: this scan has no size yet."</p>
+                })}
+                <ul class="side-cards">
+                    {move || {
+                        let word = query.get().trim().to_lowercase();
+                        placement
+                            .assets
+                            .get()
+                            .into_iter()
+                            .filter(|asset| word.is_empty() || asset.name.to_lowercase().contains(&word) || asset.tags.iter().any(|tag| tag.contains(&word)))
+                            .map(|asset| {
+                                let id = asset.id.clone();
+                                let id_drag = asset.id.clone();
+                                let photo = asset
+                                    .images
+                                    .iter()
+                                    .find(|path| path.to_lowercase().contains("front"))
+                                    .or_else(|| asset.images.first())
+                                    .map(|path| TauriBridge::file_url(path));
+                                view! {
+                                    <li
+                                        class="side-card"
+                                        draggable="true"
+                                        title="Click to place in the middle, or drag into the room"
+                                        on:dragstart=move |event| {
+                                            if let Some(transfer) = js_sys::Reflect::get(&event, &"dataTransfer".into()).ok().filter(|value| !value.is_null() && !value.is_undefined()) {
+                                                if let Ok(set) = js_sys::Reflect::get(&transfer, &"setData".into()).and_then(|f| f.dyn_into::<js_sys::Function>()) {
+                                                    let _ = set.call2(&transfer, &"text/plain".into(), &id_drag.as_str().into());
+                                                }
+                                            }
+                                            placement.dragging.set(Some(id_drag.clone()));
+                                        }
+                                        on:dragend=move |_| placement.dragging.set(None)
+                                        on:click=move |_| placement.place_in_view(&id)
+                                    >
+                                        <span class="side-photo">
+                                            {photo.map(|src| view! { <img src=src alt="" draggable="false" /> })}
+                                        </span>
+                                        <span class="side-name">{asset.name.clone()}</span>
+                                    </li>
+                                }
+                            })
+                            .collect_view()
+                    }}
+                </ul>
+                {move || {
+                    let chosen = placement.selected.get().and_then(|id| placement.layout.with(|layout| layout.items.iter().find(|item| item.id == id).cloned()));
+                    chosen.map(|item| {
+                        let id = item.id;
+                        view! {
+                            <div class="side-chosen">
+                                <span class="side-name">{placement.name_of(&item.asset)}</span>
+                                <div class="side-buttons">
+                                    <button class="btn btn-ghost" on:click=move |_| placement.turn(id, -placement.turn_step())>"Turn left"</button>
+                                    <button class="btn btn-ghost" on:click=move |_| placement.turn(id, placement.turn_step())>"Turn right"</button>
+                                    <button class="btn btn-ghost" on:click=move |_| placement.remove(id)>"Remove"</button>
+                                </div>
+                            </div>
+                        }
+                    })
+                }}
+            </div>
+        </aside>
     }
 }

@@ -17,6 +17,8 @@ pub struct ScanFlow {
     last: RwSignal<Option<Attempt>>,
     /// A room whose scan waits for the person's yes: (room id, name).
     pub pending: RwSignal<Option<(String, String)>>,
+    /// The screen the 3D view was opened from, so Esc goes back there.
+    origin: RwSignal<Option<View>>,
 }
 
 /// What was started last, so "Try again" can start it once more.
@@ -33,6 +35,7 @@ impl ScanFlow {
             progress: RwSignal::new(None),
             last: RwSignal::new(None),
             pending: RwSignal::new(None),
+            origin: RwSignal::new(None),
         }
     }
 
@@ -46,7 +49,10 @@ impl ScanFlow {
         .await;
         TauriBridge::listen("reconstruct://done", move |event| {
             match TauriBridge::payload::<ScanResult>(&event) {
-                Some(result) => self.view.set(View::Viewing(result)),
+                Some(result) => {
+                    self.origin.set(None);
+                    self.view.set(View::Viewing(result));
+                }
                 None => self.view.set(View::Failed("The scan finished, but its result could not be read.".into())),
             }
         })
@@ -133,7 +139,19 @@ impl ScanFlow {
         }
     }
 
+    /// Esc in the full-screen view: back to where it was opened from.
+    pub fn leave_viewer(self) {
+        match self.origin.get_untracked() {
+            Some(View::Scanning(_) | View::Viewing(_) | View::Failed(_)) | None => self.go(View::Rooms),
+            Some(from) => self.go(from),
+        }
+    }
+
     pub fn show(self, scan: ScanResult) {
+        let from = self.view.get_untracked();
+        if !matches!(from, View::Viewing(_)) {
+            self.origin.set(Some(from));
+        }
         self.view.set(View::Viewing(scan));
     }
 

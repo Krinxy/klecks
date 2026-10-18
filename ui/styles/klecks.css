@@ -620,3 +620,46 @@ code {
 .film-meta { color: var(--text-faint); font-size: 12.5px; }
 .modal-summary { margin: 16px 0 4px; font-size: 14px; color: var(--sage); font-weight: 600; line-height: 1.5; }
 .modal-actions { margin-top: 18px; display: flex; gap: 10px; }
+
+/* pictures and drawings of rooms */
+.kind-icon { width: 1.5em; height: 1.5em; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.slab-icon { display: inline-flex; margin-right: 10px; vertical-align: -0.28em; }
+.slab-add { border-style: dashed; opacity: 0.85; }
+.picture-empty { display: grid; place-items: center; width: 100%; height: 100%; color: #8a8d6a; }
+.picture-empty .kind-icon { width: 54%; height: 54%; stroke-width: 1.6; }
+.slab-room-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.slab-room-photo { overflow: hidden; }
+.room-name-input { width: 100%; padding: 12px 14px; font-size: 15px; margin-bottom: 14px; }
+.kind-grid { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.kind-tile { display: grid; justify-items: center; gap: 6px; width: 100%; padding: 12px 6px; border: 0; background: rgba(255, 255, 255, 0.06); color: var(--text); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; clip-path: polygon(0 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%); }
+.kind-tile .kind-icon { width: 34px; height: 34px; }
+.kind-tile:hover { background: rgba(255, 255, 255, 0.12); }
+.kind-tile.is-selected { background: var(--sage); color: var(--sage-ink); }
+@media (max-width: 700px) { .kind-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* the free camera with the catalog beside it */
+.freecam { position: absolute; inset: 0; }
+.freecam .viewer { position: absolute; inset: 0; }
+.room-grid.is-wide { grid-template-columns: minmax(0, 1fr); }
+.room-grid.is-wide .panel-media { display: none; }
+.freecam-side { position: absolute; top: 56px; right: 0; bottom: 14px; z-index: 5; width: 230px; display: grid; grid-template-rows: auto 1fr; pointer-events: none; }
+.freecam-side.is-closed { width: 0; }
+.side-toggle { pointer-events: auto; justify-self: end; margin-bottom: 8px; padding: 6px 14px; border: 0; background: var(--sage); color: var(--sage-ink); font: inherit; font-size: 12.5px; font-weight: 800; cursor: pointer; clip-path: polygon(8px 0, 100% 0, 100% 100%, 0 100%); }
+.side-content { pointer-events: auto; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 8px; min-height: 0; padding: 10px; background: rgba(10, 13, 6, 0.88); backdrop-filter: none; }
+.side-content[hidden] { display: none; }
+.side-note { font-size: 12px; color: var(--bad); line-height: 1.45; }
+.side-cards { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; overflow-y: auto; align-content: start; min-height: 0; scrollbar-width: thin; scrollbar-color: rgba(159, 179, 80, 0.5) transparent; }
+.side-card { cursor: grab; background: var(--paper); color: #0b0b0a; padding: 5px 5px 7px; display: grid; gap: 4px; box-shadow: 3px 3px 0 #0b0b0a; }
+.side-card:hover { box-shadow: 3px 3px 0 var(--sage); }
+.side-card:active { cursor: grabbing; }
+.side-photo { display: block; aspect-ratio: 1 / 1; background: #d9dac7; overflow: hidden; }
+.side-photo img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+.side-name { font-size: 11.5px; font-weight: 800; line-height: 1.2; overflow-wrap: anywhere; }
+.side-chosen { display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.12); color: var(--paper); }
+.side-chosen .side-name { color: var(--sage); font-size: 13px; }
+.side-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.side-buttons .btn { padding: 5px 12px; font-size: 12px; }
+.room-grid { grid-template-rows: minmax(0, 1fr); }
+/* the room screen is a column: the content takes what the head and an optional warning leave */
+.room { display: flex; flex-direction: column; }
+.room-grid { flex: 1 1 0; }

@@ -51,7 +51,7 @@ pub fn App() -> impl IntoView {
         }
         match flow.view.get_untracked() {
             View::NewScan | View::Rooms | View::Catalog | View::Settings => flow.home(),
-            View::Room(_) => flow.go(View::Rooms),
+            View::Viewing(_) => flow.leave_viewer(),
             _ => {}
         }
     });

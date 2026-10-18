@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use leptos::prelude::*;
 
-use crate::bridge::Viewer3d;
+use crate::bridge::{TauriBridge, Viewer3d};
 use crate::flow::ScanFlow;
 use crate::format::with_commas;
 use crate::model::ScanResult;
@@ -18,7 +18,7 @@ const SLOW_AFTER: Duration = Duration::from_secs(15);
 
 /// The finished scene: fly through the point cloud of your room.
 #[component]
-pub fn SceneViewer(scan: ScanResult, flow: ScanFlow, #[prop(optional)] embedded: bool) -> impl IntoView {
+pub fn SceneViewer(scan: ScanResult, flow: ScanFlow, #[prop(optional)] embedded: bool, #[prop(optional)] wide: Option<RwSignal<bool>>) -> impl IntoView {
     let enlarged = scan.clone();
     let loading = RwSignal::new(true);
     let slow = RwSignal::new(false);
@@ -27,6 +27,7 @@ pub fn SceneViewer(scan: ScanResult, flow: ScanFlow, #[prop(optional)] embedded:
     let attempt = RwSignal::new(0u32);
     let host = NodeRef::<leptos::html::Div>::new();
     let path = scan.scene_ply.clone();
+    let dir = scan.scan_dir.clone();
     let scale = scan.report.median_depth;
 
     // The element must exist before three.js can attach to it, hence the effect. It runs again for every try.
@@ -47,11 +48,16 @@ pub fn SceneViewer(scan: ScanResult, flow: ScanFlow, #[prop(optional)] embedded:
             SLOW_AFTER,
         );
         let path = path.clone();
+        let dir = dir.clone();
         leptos::task::spawn_local(async move {
             if let Err(reason) = Viewer3d::mount(HOST_ID) {
                 error.set(Some(format!("The 3D view could not start: {reason}")));
                 loading.set(false);
                 return;
+            }
+            // The floor plan knows which way is up: level the scene before it is shown.
+            if let Ok(Some(up)) = TauriBridge::call::<Option<[f64; 3]>>("scan_orientation", TauriBridge::map(&[("dir", &dir)])).await {
+                Viewer3d::set_up(up);
             }
             let outcome = Viewer3d::load(&path, scale).await;
             if attempt.get_untracked() != this_try {
@@ -77,12 +83,19 @@ pub fn SceneViewer(scan: ScanResult, flow: ScanFlow, #[prop(optional)] embedded:
                 <span class="spacer"></span>
                 <button class="btn btn-ghost" on:click=move |_| Viewer3d::reset_view()>"Reset view"</button>
                 {if embedded {
-                    view! { <button class="btn btn-primary" on:click=move |_| flow.show(enlarged.clone())>"Full screen"</button> }.into_any()
+                    match wide {
+                        Some(wide) => view! {
+                            <button class="btn btn-primary" on:click=move |_| wide.update(|on| *on = !*on)>
+                                {move || if wide.get() { "Smaller" } else { "Larger" }}
+                            </button>
+                        }.into_any(),
+                        None => view! { <button class="btn btn-primary" on:click=move |_| flow.show(enlarged.clone())>"Full screen"</button> }.into_any(),
+                    }
                 } else {
                     view! { <button class="btn btn-primary" on:click=move |_| flow.home()>"Menu"</button> }.into_any()
                 }}
             </div>
-            <p class="hud-hint">"Drag to look around, scroll to zoom, W A S D to walk, Space up, Ctrl down, Shift faster, right-drag to pan."</p>
+            <p class="hud-hint">"Drag to look around, W A S D to walk, Space up, Ctrl down, Shift faster. Alt + drag tilts, L levels. Esc leaves."</p>
             <Show when=move || loading.get()>
                 <div class="viewer-overlay">
                     <div class="overlay-box">

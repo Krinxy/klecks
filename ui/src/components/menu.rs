@@ -7,6 +7,7 @@ use leptos::prelude::*;
 use wasm_bindgen::JsValue;
 
 use crate::bridge::TauriBridge;
+use crate::components::room_picture::RoomPicture;
 use crate::flow::ScanFlow;
 use crate::format::{count_of, when};
 use crate::model::{Asset, RoomView, View};
@@ -125,7 +126,9 @@ pub fn MainMenu(flow: ScanFlow) -> impl IntoView {
                     };
                     view! {
                         <div class="slab-room">
-                            <div class="slab-room-photo">"Room picture"</div>
+                            <div class="slab-room-photo">
+                                <RoomPicture room_id=entry.room.id.clone() cover=entry.cover.clone() kind=entry.room.kind.clone() has_videos=!entry.room.videos.is_empty() />
+                            </div>
                             <div class="slab-room-line">
                                 <span class="slab-room-name">{entry.room.name.clone()}</span>
                                 <span class="slab-room-count">{count_of(entry.room.videos.len(), "video", "videos")}</span>

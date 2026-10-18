@@ -7,6 +7,7 @@ use leptos::prelude::*;
 use wasm_bindgen::JsValue;
 
 use crate::bridge::TauriBridge;
+use crate::components::room_picture::{add_videos_flow, kind_icon, NewRoom, RoomPicture};
 use crate::components::screen::Screen;
 use crate::flow::ScanFlow;
 use crate::format::{clock, count_of, when};
@@ -27,6 +28,7 @@ pub fn RoomsScreen(flow: ScanFlow, #[prop(into)] blocker: Signal<Option<String>>
     let selected = RwSignal::new(None::<String>);
     let detail = RwSignal::new(None::<Result<RoomOverview, String>>);
     let apartment = RwSignal::new(None::<Apartment>);
+    let adding = RwSignal::new(false);
 
     let refresh = move || {
         leptos::task::spawn_local(async move {
@@ -69,11 +71,10 @@ pub fn RoomsScreen(flow: ScanFlow, #[prop(into)] blocker: Signal<Option<String>>
                     <div class="plate empty">
                         <h2 class="empty-title">"No rooms yet"</h2>
                         <p class="empty-text">
-                            "Make one folder per room in your media library and put that room's videos inside, for example "
-                            <code>"rooms/livingroom"</code>
-                            ". All videos of a folder become one scene."
+                            "Make a room for each space you film: living room, bedroom, office, kitchen, hallway. "
+                            "All films of a room become one scene."
                         </p>
-                        <button class="btn btn-primary" on:click=move |_| reveal("rooms")>"Open rooms folder"</button>
+                        <button class="btn btn-primary" on:click=move |_| adding.set(true)>"Make the first room"</button>
                     </div>
                 }.into_any(),
                 Some(list) => view! {
@@ -81,6 +82,11 @@ pub fn RoomsScreen(flow: ScanFlow, #[prop(into)] blocker: Signal<Option<String>>
                         <aside class="rail">
                             <ul class="rail-list">
                                 {list.into_iter().map(|entry| rail_item(entry, selected)).collect_view()}
+                                <li>
+                                    <button class="slab slab-sm slab-add" on:click=move |_| adding.set(true)>
+                                        <span><span class="slab-label">"+ New room"</span></span>
+                                    </button>
+                                </li>
                             </ul>
                             {move || apartment.get().filter(|map| map.rooms.len() > 1).map(|map| apartment_map(map, selected))}
                             <Show when=move || !loose.get().is_empty()>
@@ -115,6 +121,16 @@ pub fn RoomsScreen(flow: ScanFlow, #[prop(into)] blocker: Signal<Option<String>>
                     </div>
                 }.into_any(),
             }}
+            {move || adding.get().then(|| view! {
+                <NewRoom
+                    on_close=Callback::new(move |_| adding.set(false))
+                    on_created=Callback::new(move |id: String| {
+                        adding.set(false);
+                        selected.set(Some(id));
+                        refresh();
+                    })
+                />
+            })}
         </Screen>
     }
 }
@@ -139,7 +155,7 @@ fn rail_item(entry: RoomView, selected: RwSignal<Option<String>>) -> impl IntoVi
                 on:mouseenter=move |_| selected.set(Some(id_hover.clone()))
             >
                 <span>
-                    <span class="slab-label">{entry.room.name.clone()}</span>
+                    <span class="slab-label"><span class="slab-icon">{kind_icon(&entry.room.kind)}</span>{entry.room.name.clone()}</span>
                     <span class="slab-detail">
                         <i class="state-dot" class:is-done=scanned></i>
                         {note}
@@ -158,7 +174,11 @@ fn room_detail(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String
     let open_id = id.clone();
     let scan_id = id.clone();
     let scan_name = name.clone();
-    let photo = data.videos.iter().find_map(|video| video.thumb.clone()).map(|path| TauriBridge::file_url(&path));
+    let cover = data.cover.clone();
+    let kind = data.room.kind.clone();
+    let picture_room = data.room.id.clone();
+    let add_room = data.room.id.clone();
+    let reload = flow;
     let status = match &data.scan {
         Some(scan) => format!(
             "{} from {}",
@@ -181,10 +201,7 @@ fn room_detail(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String
     view! {
         <div class="detail-top">
             <div class="polaroid">
-                {match photo {
-                    Some(src) => view! { <img src=src alt="" /> }.into_any(),
-                    None => view! { <span>"No picture yet"</span> }.into_any(),
-                }}
+                <RoomPicture room_id=picture_room cover=cover kind=kind has_videos=has_videos />
             </div>
             <div class="detail-main">
                 <h2 class="detail-name">{data.room.name.clone()}</h2>
@@ -199,6 +216,16 @@ fn room_detail(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String
                     {scanned.then(|| view! {
                         <button class="btn btn-primary" on:click=move |_| flow.go(View::Room(open_id.clone()))>"Open room"</button>
                     })}
+                    <button class="btn btn-ghost" on:click=move |_| {
+                        let room = add_room.clone();
+                        let again = room.clone();
+                        add_videos_flow(room, move |result| {
+                            if result.is_ok() {
+                                reload.go(View::Rooms);
+                                reload.go(View::Room(again));
+                            }
+                        });
+                    }>"Add videos"</button>
                     <button
                         class=if scanned { "btn btn-ghost" } else { "btn btn-primary" }
                         disabled=move || !can_scan()
