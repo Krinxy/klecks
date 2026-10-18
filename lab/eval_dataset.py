@@ -42,6 +42,16 @@ def ssim(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.mean(scores))
 
 
+def speckle(render: np.ndarray, real: np.ndarray) -> float:
+    """Fine grain of the render on the smooth parts of the photo (walls, floor), relative to the photo: 1 = as calm as the photo, above = noisier."""
+    grey = lambda x: cv2.cvtColor(x.astype(np.uint8), cv2.COLOR_BGR2GRAY).astype(np.float32)
+    a, b = grey(render), grey(real)
+    gradient = cv2.GaussianBlur(np.abs(cv2.Laplacian(cv2.GaussianBlur(b, (0, 0), 2.0), cv2.CV_32F)), (0, 0), 6.0)
+    flat = gradient < np.percentile(gradient, 40)
+    fine = lambda x: np.abs(x - cv2.GaussianBlur(x, (0, 0), 1.5))[flat].mean()
+    return float(fine(a) / max(fine(b), 1e-6))
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print(__doc__)
@@ -49,7 +59,7 @@ def main() -> int:
     renders = sorted(Path(sys.argv[1]).glob("*.png"))
     pictures = sorted(p for p in Path(sys.argv[2]).rglob("*") if p.suffix.lower() in (".jpg", ".jpeg", ".png"))
     small = {}
-    psnrs, ssims, crisp = [], [], []
+    psnrs, ssims, crisp, noise = [], [], [], []
     for render_path in renders:
         render_small = load(render_path, MATCH_SIDE)
         best, best_error = None, 1e18
@@ -72,7 +82,8 @@ def main() -> int:
         ssims.append(ssim(render, real))
         edge = lambda x: float(cv2.Laplacian(cv2.cvtColor(x.astype(np.uint8), cv2.COLOR_BGR2GRAY), cv2.CV_32F).var())
         crisp.append(edge(render) / max(edge(real), 1e-6))
-    print(f"{Path(sys.argv[1]).parent.name}: PSNR {np.mean(psnrs):.2f} dB  SSIM {np.mean(ssims):.3f}  crispness {np.mean(crisp):.2f}  ({len(psnrs)} held-out frames)")
+        noise.append(speckle(render, real))
+    print(f"{Path(sys.argv[1]).parent.name}: PSNR {np.mean(psnrs):.2f} dB  SSIM {np.mean(ssims):.3f}  crispness {np.mean(crisp):.2f}  noise {np.mean(noise):.2f}  ({len(psnrs)} held-out frames)")
     return 0
 
 

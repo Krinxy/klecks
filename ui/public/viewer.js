@@ -405,6 +405,7 @@ class KlecksViewer {
 
   /** Back to the position the video was filmed from. */
   resetView() {
+    this.manualCamera = false;
     this.radius = this.scale * 0.6;
     // Back to where the first film was shot from, looking the way it looked (levelled with the floor).
     const forward = new THREE.Vector3(0, 0, -1);
@@ -613,7 +614,24 @@ class KlecksViewer {
   }
 
   /** Places the camera on a sphere around the pivot. */
+  /**
+   * Puts the camera exactly somewhere (world coordinates of the scene): a training camera of the scan, to compare
+   * what the viewer draws with what the trainer rendered. Walking or dragging goes back to normal.
+   */
+  setCamera({ position, forward, up, fov }) {
+    if (!this.renderer) return;
+    this.manualCamera = true;
+    this.camera.position.set(...position);
+    this.camera.up.set(...up);
+    this.camera.lookAt(new THREE.Vector3(...position).add(new THREE.Vector3(...forward)));
+    if (fov) this.camera.fov = fov;
+    this.camera.updateProjectionMatrix();
+    this.camera.updateMatrixWorld();
+    this.dirty = true;
+  }
+
   #apply() {
+    if (this.manualCamera) return;
     const cosPitch = Math.cos(this.pitch);
     const offset = new THREE.Vector3(Math.sin(this.yaw) * cosPitch, Math.sin(this.pitch), Math.cos(this.yaw) * cosPitch);
     this.camera.position.copy(this.pivot).addScaledVector(offset, this.radius);
