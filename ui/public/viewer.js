@@ -15,6 +15,8 @@ import { SparkRenderer, SplatEdit, SplatEditRgbaBlendMode, SplatEditSdf, SplatEd
 
 const RECORD_BYTES = 15; // float32 x,y,z + uint8 r,g,b (see lab/vggt_try.py write_ply)
 const MAX_PITCH = 1.5;
+const STALL_MS = 20000; // no data for this long: stop waiting and say so
+const PREPARE_MS = 120000; // preparing the splats can take a while on a busy graphics card, but not forever
 
 class KlecksViewer {
   constructor() {
@@ -76,7 +78,26 @@ class KlecksViewer {
 
   /** Reads the file in pieces so the screen can say how far it is (large scenes are 100-400 MB). */
   async #download(url) {
-    const response = await fetch(url);
+    const stalled = new Error("The scene stopped loading: no data came in for 20 seconds. Close the app, open it again and try once more.");
+    const controller = new AbortController();
+    let timer = 0;
+    const watch = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => controller.abort(), STALL_MS);
+    };
+    try {
+      watch();
+      return await this.#readAll(url, controller.signal, watch);
+    } catch (error) {
+      if (error?.name === "AbortError") throw stalled;
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async #readAll(url, signal, watch) {
+    const response = await fetch(url, { signal });
     if (!response.ok) throw new Error(`Could not read the scene (HTTP ${response.status}).`);
     const total = Number(response.headers.get("content-length")) || 0;
     const reader = response.body.getReader();
@@ -86,6 +107,7 @@ class KlecksViewer {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
+      watch();
       chunks.push(value);
       received += value.length;
       const now = performance.now();
@@ -128,7 +150,10 @@ class KlecksViewer {
     this.#status("Preparing the splats…");
     const prepared = performance.now();
     const splats = new SplatMesh({ fileBytes: bytes, fileName: "scene.ply" });
-    await splats.initialized;
+    await Promise.race([
+      splats.initialized,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("The splats could not be prepared in two minutes. The graphics card may be busy: close other programs that use it and try again.")), PREPARE_MS)),
+    ]);
     this.timings.prepareMs = Math.round(performance.now() - prepared);
     splats.rotation.x = Math.PI; // the model's y axis points down; flip so up is up
     this.scene.add(splats);
