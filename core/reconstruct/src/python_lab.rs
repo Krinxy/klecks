@@ -212,6 +212,9 @@ impl PythonLabReconstructor {
         if !settings.hf_home.trim().is_empty() {
             command.env("HF_HOME", settings.hf_home.trim());
         }
+        if !settings.colmap.trim().is_empty() {
+            command.env("KLECKS_COLMAP", settings.colmap.trim());
+        }
         if self.brush.is_some() {
             command.arg("--colmap");
             if let Some(model) = &self.upscale_model {

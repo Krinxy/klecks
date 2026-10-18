@@ -71,6 +71,8 @@ pub struct ReconstructSettings {
     /// Colour detail per splat (0-3). Each step roughly doubles the file and the loading time;
     /// 1 looked the same as 3 in the held-out test and is 2.6 times smaller.
     pub sh_degree: u32,
+    /// `colmap.exe` that places the cameras precisely; empty = look for `colmap` on the PATH.
+    pub colmap: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
