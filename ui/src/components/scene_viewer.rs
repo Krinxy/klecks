@@ -58,7 +58,7 @@ pub fn SceneViewer(scan: ScanResult, flow: ScanFlow) -> impl IntoView {
             </div>
             <p class="hud-hint">"Drag to look around, scroll to zoom, W A S D to walk, right-drag to pan."</p>
             <Show when=move || loading.get()>
-                <div class="viewer-overlay">"Loading the scene…"</div>
+                <div class="viewer-overlay"><span id="klecks-viewer-status">"Loading the scene…"</span></div>
             </Show>
             {move || error.get().map(|message| view! { <div class="viewer-overlay viewer-overlay-bad">{message}</div> })}
         </div>

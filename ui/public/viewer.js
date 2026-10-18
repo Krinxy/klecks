@@ -61,13 +61,51 @@ class KlecksViewer {
    */
   async load(url, sceneScale) {
     if (!this.renderer) throw new Error("viewer is not mounted");
+    const timings = (this.timings = { startedAt: performance.now() });
+    const bytes = await this.#download(url);
+    timings.downloadMs = Math.round(performance.now() - timings.startedAt);
+    timings.megabytes = Math.round(bytes.byteLength / 1048576);
+    this.#clear();
+    const header = new TextDecoder("ascii").decode(bytes.subarray(0, Math.min(bytes.byteLength, 2048)));
+    const result = header.includes("f_dc_0") ? await this.#showSplats(bytes, sceneScale) : this.#showPoints(bytes.buffer);
+    timings.totalMs = Math.round(performance.now() - timings.startedAt);
+    console.log("[klecks viewer] load", JSON.stringify(timings));
+    return result;
+  }
+
+  /** Reads the file in pieces so the screen can say how far it is (large scenes are 100-400 MB). */
+  async #download(url) {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`Could not read the scene (HTTP ${response.status}).`);
-    const buffer = await response.arrayBuffer();
-    this.#clear();
-    const header = new TextDecoder("ascii").decode(new Uint8Array(buffer, 0, Math.min(buffer.byteLength, 2048)));
-    if (header.includes("f_dc_0")) return this.#showSplats(buffer, sceneScale);
-    return this.#showPoints(buffer);
+    const total = Number(response.headers.get("content-length")) || 0;
+    const reader = response.body.getReader();
+    const chunks = [];
+    let received = 0;
+    let shownAt = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      const now = performance.now();
+      if (now - shownAt > 120) {
+        shownAt = now;
+        this.#status(total ? `Reading the scene, ${Math.round(received / 1048576)} of ${Math.round(total / 1048576)} MB` : `Reading the scene, ${Math.round(received / 1048576)} MB`);
+      }
+    }
+    const bytes = new Uint8Array(received);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return bytes;
+  }
+
+  /** Text shown over the viewer while it works (the element is the loading overlay of the UI). */
+  #status(text) {
+    const element = document.getElementById("klecks-viewer-status");
+    if (element) element.textContent = text;
   }
 
   #clear() {
@@ -84,9 +122,12 @@ class KlecksViewer {
     }
   }
 
-  async #showSplats(buffer, sceneScale) {
-    const splats = new SplatMesh({ fileBytes: new Uint8Array(buffer), fileName: "scene.ply" });
+  async #showSplats(bytes, sceneScale) {
+    this.#status("Preparing the splats…");
+    const prepared = performance.now();
+    const splats = new SplatMesh({ fileBytes: bytes, fileName: "scene.ply" });
     await splats.initialized;
+    this.timings.prepareMs = Math.round(performance.now() - prepared);
     splats.rotation.x = Math.PI; // the model's y axis points down; flip so up is up
     this.scene.add(splats);
     this.splats = splats;

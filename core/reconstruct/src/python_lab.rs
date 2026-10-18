@@ -300,6 +300,7 @@ impl PythonLabReconstructor {
             .args(["--export-name", &format!("{EXPORT_PREFIX}{{iter}}.ply")])
             .args(["--export-every", &export_every.to_string()])
             .args(["--max-splats", &self.preset.max_splats.to_string()])
+            .args(["--sh-degree", &self.settings.sh_degree.min(3).to_string()])
             .args(["--eval-every", "100000000"])
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(log_err));
