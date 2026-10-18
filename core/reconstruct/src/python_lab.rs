@@ -10,7 +10,7 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
-use klecks_settings::ReconstructSettings;
+use klecks_settings::{PipelineSettings, PresetSettings, ReconstructSettings};
 
 use crate::{
     CancelToken, ProgressEvent, ReconstructError, Reconstructor, ScanRequest, ScanResult,
@@ -22,8 +22,8 @@ const POLL: Duration = Duration::from_millis(100);
 const LOG_TAIL_LINES: usize = 6;
 const MAX_PARENT_LEVELS: usize = 6;
 /// Share of the progress bar taken by the Python stage when a splat is trained afterwards
-/// (about a minute against about ten for the training).
-const PYTHON_SHARE: f32 = 0.15;
+/// (a few minutes, more for a long walk-through, against about ten for the training).
+const PYTHON_SHARE: f32 = 0.35;
 /// Brush reports nothing while training; until its first export we assume this speed.
 const FALLBACK_STEPS_PER_SECOND: f32 = 45.0;
 const EXPORT_PREFIX: &str = "splat_";
@@ -41,6 +41,8 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// An ONNX model run from Rust replaces it; the `Reconstructor` trait keeps the app unchanged.
 pub struct PythonLabReconstructor {
     settings: ReconstructSettings,
+    /// Training length and splat limit of the chosen quality preset.
+    preset: PresetSettings,
     python: PathBuf,
     script: PathBuf,
     upscale_model: Option<PathBuf>,
@@ -49,7 +51,11 @@ pub struct PythonLabReconstructor {
 
 impl PythonLabReconstructor {
     /// `config_dir` is the shipped `config/` folder; the default script lives in `lab/` above it.
-    pub fn new(settings: &ReconstructSettings, config_dir: &Path) -> Result<Self, ReconstructError> {
+    pub fn new(pipeline: &PipelineSettings, config_dir: &Path) -> Result<Self, ReconstructError> {
+        let settings = &pipeline.reconstruct;
+        let preset = pipeline.active_preset().cloned().ok_or_else(|| {
+            ReconstructError::NotConfigured(format!("quality preset '{}' does not exist", pipeline.preset))
+        })?;
         if settings.backend != "python_lab" {
             return Err(ReconstructError::NotConfigured(format!(
                 "backend '{}' is not available yet (use python_lab)",
@@ -75,6 +81,7 @@ impl PythonLabReconstructor {
         }
         Ok(Self {
             settings: settings.clone(),
+            preset,
             python,
             script,
             upscale_model: Self::optional_file(&settings.upscale_model, "upscale model")?,
@@ -188,7 +195,9 @@ impl PythonLabReconstructor {
             .args(&request.videos)
             .arg("--out")
             .arg(&request.scan_dir)
-            .args(["--frames", &settings.frames.to_string()])
+            .args(["--window", &settings.window.to_string()])
+            .args(["--fps", &settings.frame_rate.to_string()])
+            .args(["--max-frames", &settings.max_frames.to_string()])
             .args(["--conf-percentile", &settings.conf_percentile.to_string()])
             .args(["--view-points", &settings.view_points.to_string()])
             .env("PYTHONUNBUFFERED", "1")
@@ -279,7 +288,7 @@ impl PythonLabReconstructor {
         let log = File::create(&log_path).map_err(ReconstructError::ScanDir)?;
         let log_err = log.try_clone().map_err(ReconstructError::ScanDir)?;
 
-        let steps = self.settings.train_steps.max(1000);
+        let steps = self.preset.train_iterations.max(1000);
         // Brush writes nothing while it trains, so progress is read from its periodic exports.
         let export_every = if steps.is_multiple_of(5) { steps / 5 } else { steps };
         let mut command = Self::worker(brush);
@@ -290,6 +299,7 @@ impl PythonLabReconstructor {
             .arg(&work_dir)
             .args(["--export-name", &format!("{EXPORT_PREFIX}{{iter}}.ply")])
             .args(["--export-every", &export_every.to_string()])
+            .args(["--max-splats", &self.preset.max_splats.to_string()])
             .args(["--eval-every", "100000000"])
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(log_err));
@@ -378,19 +388,9 @@ impl Reconstructor for PythonLabReconstructor {
 mod tests {
     use super::*;
 
-    fn settings() -> ReconstructSettings {
-        ReconstructSettings {
-            backend: "python_lab".into(),
-            python: String::new(),
-            script: String::new(),
-            hf_home: String::new(),
-            frames: 72,
-            conf_percentile: 40.0,
-            view_points: 3_000_000,
-            upscale_model: String::new(),
-            brush: String::new(),
-            train_steps: 30_000,
-        }
+    fn pipeline() -> PipelineSettings {
+        let config = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config");
+        klecks_settings::SettingsLoader::new(config, None).load().unwrap().pipeline
     }
 
     #[test]
@@ -404,7 +404,7 @@ mod tests {
 
     #[test]
     fn refuses_to_start_without_a_configured_python() {
-        let error = PythonLabReconstructor::new(&settings(), Path::new(".")).err().unwrap();
+        let error = PythonLabReconstructor::new(&pipeline(), Path::new(".")).err().unwrap();
         assert!(matches!(error, ReconstructError::NotConfigured(_)));
     }
 
@@ -423,8 +423,8 @@ mod tests {
 
     #[test]
     fn unknown_backend_is_not_configured() {
-        let mut onnx = settings();
-        onnx.backend = "onnx".into();
+        let mut onnx = pipeline();
+        onnx.reconstruct.backend = "onnx".into();
         assert!(PythonLabReconstructor::new(&onnx, Path::new(".")).is_err());
     }
 

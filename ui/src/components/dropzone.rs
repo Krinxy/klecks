@@ -7,7 +7,7 @@ use leptos::prelude::*;
 use wasm_bindgen::JsValue;
 
 use crate::bridge::TauriBridge;
-use crate::components::recent_scans::RecentScans;
+use crate::components::screen::BackButton;
 use crate::components::stage::Stage;
 use crate::flow::ScanFlow;
 use crate::model::{DropState, VideoInfo};
@@ -77,6 +77,7 @@ pub fn DropZone(#[prop(into)] blocker: Signal<Option<String>>, flow: ScanFlow) -
 
     view! {
         <Stage mood=mood>
+            <BackButton flow=flow />
             <div class="card">
                 {move || match state.get() {
                     DropState::Accepted(videos) => {
@@ -127,7 +128,6 @@ pub fn DropZone(#[prop(into)] blocker: Signal<Option<String>>, flow: ScanFlow) -
                         <div class="card-actions">
                             <button class="btn btn-primary" on:click=pick>"Choose videos"</button>
                         </div>
-                        <RecentScans flow=flow />
                     }.into_any(),
                 }}
             </div>

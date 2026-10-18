@@ -22,3 +22,4 @@ serde_json.workspace = true
 klecks-settings.workspace = true
 klecks-gpu.workspace = true
 klecks-reconstruct.workspace = true
+klecks-library.workspace = true

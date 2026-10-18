@@ -27,6 +27,17 @@ D:/Projects/tools/brush/brush_app.exe D:/Projects/klecks-runs/room/colmap --tota
 
 The app does exactly this (core/reconstruct runs both steps). Outputs stay outside the repo; they show the owner's home.
 
+## Long films and whole rooms (2026-10-18)
+
+- VGGT only handles 50-70 frames at once (16 GB card), so `room_scan.py` cuts every film at 1.5 frames per
+  second, splits the frames of all films into windows of 56 with 12 shared frames and lines the windows up
+  one after the other (rotation from the shared cameras, scale from the depth both windows see in those
+  frames, position from the camera centres). Seven films incl. a 3.5 minute 4K walk-through: 387 frames,
+  9 windows, worst alignment error 19 % of the scene depth, 6.3 minutes.
+- Portrait and landscape films can be mixed (white-padded common canvas per window); HDR (HLG) clips
+  are tone-mapped to SDR; the 180 degree rotation tag of the landscape clips is applied by ffmpeg.
+- ffmpeg's `select` filter can't take hundreds of frame numbers (parser overflow); the `fps` filter can.
+
 ## Findings (2026-10-17, RTX 4080, five phone clips of 1.4–13.5 s, standing and panning)
 
 **VGGT-1B** (cameras + depth, weights CC-BY-NC-4.0)

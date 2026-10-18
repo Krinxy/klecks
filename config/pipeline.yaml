@@ -11,22 +11,25 @@ pipeline:
     python: ""              # python.exe of the lab env; empty = backend not configured
     script: ""              # path to lab/room_scan.py; empty = lab/room_scan.py next to or above config/
     hf_home: ""             # where model weights are cached; empty = inherit HF_HOME
-    frames: 72              # frames shared across all videos (VRAM: ~13.5 GB at 72)
+    window: 56              # frames VGGT looks at together; lowered automatically to fit the GPU
+    frame_rate: 1.5         # frames taken per second of film; long films are cut into overlapping windows
+    max_frames: 400         # frames for the whole room
     conf_percentile: 40.0   # drop the least confident N percent of points
     view_points: 3000000    # size of the downsampled point cloud (used when no splat is trained)
     upscale_model: ""       # e.g. 4x-UltraSharp.safetensors: sharpens the training images; empty = off
     brush: ""               # path to brush_app.exe (Gaussian splat trainer); empty = point cloud only
-    train_steps: 30000      # splat training steps (about 8-10 minutes on an RTX 4080)
 
+  # Quality preset: how long the splat trains and how many splats it may grow (Settings > Quality).
+  # Minutes are for an RTX 4080.
   preset: high
   presets:
-    draft:
+    draft:            # about 2 minutes
       train_iterations: 7000
       max_splats: 1000000
-    high:
+    high:             # about 10 minutes
       train_iterations: 30000
       max_splats: 3000000
-    max:
+    max:              # about 20 minutes
       train_iterations: 60000
       max_splats: 6000000
 

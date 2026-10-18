@@ -25,6 +25,14 @@ phone video ──► frames ──► camera poses ──► 3D Gaussian Splatt
   Video decoding and file IO are CPU by nature and not covered by that rule.
 - **NVIDIA is the tested target.** AMD is allowed by config but untested (no AMD machine).
 
+## Media library and menu
+
+The app opens on a start menu (Rooms, Catalog, New scan, Settings, Quit; arrow keys and Enter, Esc goes
+back). Rooms and furniture are folders under `media/`:
+`media/rooms/<room>/` holds all videos of one room, `media/assets/<item>/` photos and an `asset.yaml`
+(name, category, size in cm) of one piece of furniture. Details in [docs/media-library.md](docs/media-library.md).
+Settings (quality preset, folders) are saved to your user config and apply immediately.
+
 ## Reconstruction backend
 
 `Reconstructor` (core/reconstruct) is a trait; today's implementation `PythonLabReconstructor`
@@ -58,10 +66,11 @@ config/        YAML settings (klecks, capture, pipeline, gemini) + deploy script
 core/settings  YAML loading, user overrides, platform paths
 core/gpu       GPU detection and the never-on-CPU guard
 core/reconstruct  Reconstructor trait + Python lab backend (progress, cancel)
+core/library   rooms and furniture read from the media folder
 app/           Tauri shell: window, commands, installer config
 ui/            Leptos (wasm) frontend, built with Trunk
 lab/           Python/conda lab for experiments and ONNX export (not shipped)
-docs/          capture guide
+docs/          capture guide, media library
 ```
 
 ## Where things live on a user's machine

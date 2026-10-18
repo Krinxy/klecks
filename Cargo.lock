@@ -1777,6 +1777,7 @@ name = "klecks-app"
 version = "0.1.0"
 dependencies = [
  "klecks-gpu",
+ "klecks-library",
  "klecks-reconstruct",
  "klecks-settings",
  "serde",
@@ -1795,6 +1796,14 @@ dependencies = [
  "serde",
  "thiserror 2.0.21",
  "wgpu",
+]
+
+[[package]]
+name = "klecks-library"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_yaml_ng",
 ]
 
 [[package]]

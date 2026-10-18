@@ -24,8 +24,7 @@ pub struct ScanRequest {
 }
 
 impl ScanRequest {
-    /// Puts the scan in a fresh `<scans_dir>/<name>-<unix time>` folder, named after the video
-    /// (or "<n>-videos" when several films of the same room are combined).
+    /// Puts the scan in a fresh folder named after the video (or "<n>-videos" for several).
     pub fn new(videos: &[PathBuf], scans_dir: &Path) -> Self {
         let name = match videos {
             [single] => single
@@ -34,6 +33,12 @@ impl ScanRequest {
                 .unwrap_or_else(|| "scan".into()),
             many => format!("{}-videos", many.len()),
         };
+        Self::named(videos, scans_dir, &name)
+    }
+
+    /// Puts the scan in a fresh `<scans_dir>/<name>-<unix time>` folder; `name` is usually the
+    /// room, so all scans of a room can be found again.
+    pub fn named(videos: &[PathBuf], scans_dir: &Path, name: &str) -> Self {
         let seconds = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|elapsed| elapsed.as_secs())

@@ -22,6 +22,7 @@ Progress is printed as JSON lines prefixed with ``@@`` so the app can parse them
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import gc
 import json
 import subprocess
@@ -41,7 +42,8 @@ PATCH = 14  # VGGT works on 14x14 pixel patches
 # Measured on an RTX 4080 at 392x686 px per frame (peak allocated: 32 frames 11.1 GB, 64 frames 12.9 GB)
 VGGT_BASE_GB = 9.3
 VGGT_GB_PER_FRAME = 0.056
-VRAM_RESERVE_GB = 2.5  # headroom for the desktop, the app's own web view and allocator slack
+VRAM_RESERVE_GB = 3.0  # headroom for the desktop, the app's own web view and allocator slack
+VRAM_CAP_MARGIN_GB = 2.0  # memory left to everything else on the card (CUDA context, web views, desktop)
 MIN_FRAMES = 8
 
 
@@ -51,73 +53,98 @@ def progress(stage: str, pct: int, message: str) -> None:
 
 # ── frames ────────────────────────────────────────────────────────────────────────────────────
 
-def display_rotation(video: Path) -> int | None:
-    """Phones store portrait video sideways plus a rotation tag; OpenCV ignores the tag."""
+FRAME_LONG_SIDE = 1920  # frames are stored at most this large (Brush trains at <= 1920 anyway)
+HDR_TRANSFERS = {"arib-std-b67", "smpte2084"}  # HLG and PQ
+TONEMAP = ("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,"
+           "tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p")
+
+
+def probe_video(video: Path) -> dict:
+    """Length, frame rate and colour transfer of a clip (ffprobe's JSON: HDR clips carry several blocks)."""
     result = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream_side_data=rotation", "-of", "csv=p=0", str(video)],
+         "-show_entries", "stream=nb_frames,r_frame_rate,duration,color_transfer:format=duration",
+         "-of", "json", str(video)],
         capture_output=True, text=True,
     )
-    text = result.stdout.strip().split("\n")[0].strip()
-    degrees = int(float(text)) if text else 0
-    # ffprobe reports the counter-clockwise rotation the display matrix applies.
-    return {-90: cv2.ROTATE_90_CLOCKWISE, 90: cv2.ROTATE_90_COUNTERCLOCKWISE,
-            180: cv2.ROTATE_180, -180: cv2.ROTATE_180}.get(degrees)
+    data = json.loads(result.stdout or "{}")
+    stream = (data.get("streams") or [{}])[0]
+    numerator, _, denominator = str(stream.get("r_frame_rate", "30/1")).partition("/")
+    fps = float(numerator) / float(denominator or 1) if float(denominator or 1) else 30.0
+    duration = float(stream.get("duration") or data.get("format", {}).get("duration") or 0.1)
+    counted = str(stream.get("nb_frames", ""))
+    frames = int(counted) if counted.isdigit() else int(duration * fps)
+    return {"fps": fps, "duration": max(duration, 0.1), "frames": max(frames, 1),
+            "hdr": stream.get("color_transfer") in HDR_TRANSFERS}
 
 
 def video_seconds(video: Path) -> float:
-    cap = cv2.VideoCapture(str(video))
-    frames, fps = cap.get(cv2.CAP_PROP_FRAME_COUNT), cap.get(cv2.CAP_PROP_FPS) or 30.0
-    cap.release()
-    return max(frames / fps, 0.1)
-
-
-def split_budget(seconds: list[float], total: int, minimum: int = 8) -> list[int]:
-    """Shares `total` frames across videos by length, but gives every video at least `minimum`."""
-    counts = [max(minimum, round(total * s / sum(seconds))) for s in seconds]
-    while sum(counts) > total and max(counts) > minimum:
-        counts[counts.index(max(counts))] -= 1
-    return counts
+    return probe_video(video)["duration"]
 
 
 def extract_frames(video: Path, out_dir: Path, tag: str, count: int) -> list[Path]:
-    """Evenly spaced, upright, full-resolution frames from one clip."""
+    """Evenly spaced, upright, full-resolution frames from one clip, cut by ffmpeg.
+
+    ffmpeg applies the phone's rotation tag itself (OpenCV does not) and understands every codec.
+    HDR clips (HLG / PQ) are tone-mapped to SDR so their colours match the other films of the room.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
-    rotation = display_rotation(video)
-    cap = cv2.VideoCapture(str(video))
-    cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 0)  # we rotate ourselves, once and explicitly
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    picks = np.linspace(0, total - 1, num=min(count, total), dtype=int)
-    paths: list[Path] = []
-    for n, index in enumerate(picks):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(index))
-        ok, frame = cap.read()
-        if not ok:
-            continue
-        if rotation is not None:
-            frame = cv2.rotate(frame, rotation)
-        path = out_dir / f"{tag}_{n:04d}.jpg"
-        cv2.imwrite(str(path), frame, [cv2.IMWRITE_JPEG_QUALITY, 97])
-        paths.append(path)
-    cap.release()
-    return paths
+    info = probe_video(video)
+    # `fps` samples evenly in time (a `select` of hundreds of frame numbers overflows ffmpeg's parser)
+    sample = f"fps={min(count, info['frames'])}/{info['duration']:.4f}"
+    # Nothing downstream looks at more than FRAME_LONG_SIDE pixels, and tone mapping 4K frames is slow.
+    shrink = (f"scale='if(gt(iw,ih),min({FRAME_LONG_SIDE},iw),-2)':'if(gt(iw,ih),-2,min({FRAME_LONG_SIDE},ih))'"
+              ":flags=lanczos")
+    attempts = [[sample, shrink, TONEMAP], [sample, shrink]] if info["hdr"] else [[sample, shrink]]  # tone mapping needs zscale
+    problem = ""
+    for chain in attempts:
+        command = ["ffmpeg", "-v", "error", "-y", "-i", str(video), "-vf", ",".join(chain),
+                   "-q:v", "2", str(out_dir / f"{tag}_%04d.jpg")]
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode == 0:
+            break
+        problem = result.stderr.strip()[-300:]
+        for leftover in out_dir.glob(f"{tag}_*.jpg"):
+            leftover.unlink()
+    frames = sorted(out_dir.glob(f"{tag}_*.jpg"))
+    if not frames:
+        # a film that silently drops out would give a room that is missing a part: fail loudly instead
+        raise SystemExit(f"Could not read frames from {video.name}: {problem or 'no frames came out'}")
+    return frames[:count]
 
 
-def load_for_vggt(paths: list[Path], long_side: int) -> torch.Tensor:
-    """Whole frame, aspect kept, sides rounded to the model's patch size.
+MIXED_LONG_SIDE = 518  # canvas side when portrait and landscape films are combined (same token count)
+
+
+def fit(width: int, height: int, long_side: int) -> tuple[int, int]:
+    """Size with the aspect kept, long side near `long_side`, both sides multiples of the patch size."""
+    scale = long_side / max(width, height)
+    return (max(PATCH, round(width * scale / PATCH) * PATCH), max(PATCH, round(height * scale / PATCH) * PATCH))
+
+
+def load_for_vggt(paths: list[Path], long_side: int) -> tuple[torch.Tensor, list[tuple[int, int, int, int]]]:
+    """Whole frames, aspect kept, sides rounded to the model's patch size.
 
     VGGT's own loader would centre-crop portrait frames to a square and throw most of the image away.
+    A batch needs one shape, so when portrait and landscape films of a room are mixed every frame is
+    centred on a common canvas with white padding. `boxes` says where each frame sits on its canvas as
+    (x0, y0, width, height); the padding is ignored later.
     """
-    batch = []
-    for path in paths:
-        image = cv2.cvtColor(cv2.imread(str(path)), cv2.COLOR_BGR2RGB)
-        height, width = image.shape[:2]
-        scale = long_side / max(height, width)
-        new_w = max(PATCH, round(width * scale / PATCH) * PATCH)
-        new_h = max(PATCH, round(height * scale / PATCH) * PATCH)
+    images = [cv2.cvtColor(cv2.imread(str(path)), cv2.COLOR_BGR2RGB) for path in paths]
+    shapes = {fit(image.shape[1], image.shape[0], long_side) for image in images}
+    side = long_side if len(shapes) == 1 else min(long_side, MIXED_LONG_SIDE)
+    sizes = [fit(image.shape[1], image.shape[0], side) for image in images]
+    canvas_w, canvas_h = max(w for w, _ in sizes), max(h for _, h in sizes)
+
+    batch, boxes = [], []
+    for image, (new_w, new_h) in zip(images, sizes):
         resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-        batch.append(torch.from_numpy(resized).permute(2, 0, 1).float() / 255.0)
-    return torch.stack(batch)
+        x0, y0 = (canvas_w - new_w) // 2, (canvas_h - new_h) // 2
+        canvas = np.full((canvas_h, canvas_w, 3), 255, np.uint8)
+        canvas[y0:y0 + new_h, x0:x0 + new_w] = resized
+        batch.append(torch.from_numpy(canvas).permute(2, 0, 1).float() / 255.0)
+        boxes.append((x0, y0, new_w, new_h))
+    return torch.stack(batch), boxes
 
 
 # ── super-resolution ──────────────────────────────────────────────────────────────────────────
@@ -260,12 +287,14 @@ def nearest_views(extrinsic: torch.Tensor, count: int, scale: float) -> torch.Te
 
 
 def agrees_with_neighbours(world: torch.Tensor, neighbours: torch.Tensor, extrinsic: torch.Tensor,
-                           intrinsic: torch.Tensor, depth: torch.Tensor, tolerance: float) -> torch.Tensor:
+                           intrinsic: torch.Tensor, depth: torch.Tensor, boxes: torch.Tensor,
+                           tolerance: float) -> torch.Tensor:
     """Keeps a point unless a neighbouring frame sees clearly *empty* space where it claims a surface.
 
     Per neighbour: the point lands on a surface at about the same depth (support), in front of
     something nearer (hidden there, says nothing) or in front of something much farther (violation).
-    A point is kept if at least one neighbour supports it or none contradicts it.
+    A point is kept if at least one neighbour supports it or none contradicts it. `boxes` (x0, y0, x1, y1
+    per frame, canvas pixels) keeps the test inside each neighbour's picture, not its padding.
     """
     _, height, width = depth.shape
     support = torch.zeros(len(world), device=world.device)
@@ -277,7 +306,8 @@ def agrees_with_neighbours(world: torch.Tensor, neighbours: torch.Tensor, extrin
         safe = z.clamp(min=1e-6)
         u = cam[:, 0] / safe * K[0, 0] + K[0, 2]
         v = cam[:, 1] / safe * K[1, 1] + K[1, 2]
-        inside = (z > 1e-6) & (u >= 0) & (u <= width - 1) & (v >= 0) & (v <= height - 1)
+        x0, y0, x1, y1 = boxes[j]
+        inside = (z > 1e-6) & (u >= x0) & (u <= x1 - 1) & (v >= y0) & (v <= y1 - 1)
         grid = torch.stack([u / (width - 1) * 2 - 1, v / (height - 1) * 2 - 1], dim=-1)[None, None]
         seen = F.grid_sample(depth[j][None, None], grid, mode="nearest", align_corners=True)[0, 0, 0]
         relative = (seen - z) / safe
@@ -286,11 +316,109 @@ def agrees_with_neighbours(world: torch.Tensor, neighbours: torch.Tensor, extrin
     return (support >= 1) | (violation == 0)
 
 
+# ── long films: parts that are lined up one after the other ───────────────────────────────────
+
+MAX_ALIGN_ERROR = 0.35  # shared frames may disagree by this share of the scene depth, else the part is refused
+
+
+@dataclass
+class Part:
+    """VGGT's answer for one window of frames, in its own coordinates until `line_up` moves it."""
+    paths: list[Path]
+    boxes: list[tuple[int, int, int, int]]
+    extrinsic: torch.Tensor      # S,3,4 world -> camera
+    intrinsic: torch.Tensor      # S,3,3
+    depth: torch.Tensor          # S,H,W
+    confidence: torch.Tensor     # S,H,W
+    height: int
+    width: int
+
+
+def estimate_part(model: VGGT, paths: list[Path], long_side: int, dtype: torch.dtype) -> Part:
+    images, boxes = load_for_vggt(paths, long_side)
+    predictions = run_vggt(model, images, dtype)
+    height, width = (int(n) for n in images.shape[-2:])
+    extrinsic, intrinsic = pose_encoding_to_extri_intri(predictions["pose_enc"], (height, width))
+    part = Part(paths, boxes, extrinsic[0].float(), intrinsic[0].float(),
+                predictions["depth"][0, ..., 0].float(), predictions["depth_conf"][0].float(), height, width)
+    del predictions, images
+    return part
+
+
+def centers_of(extrinsic: np.ndarray) -> np.ndarray:
+    """Camera positions in world coordinates from world -> camera matrices."""
+    return -np.einsum("sji,sj->si", extrinsic[:, :, :3], extrinsic[:, :, 3])
+
+
+def rotation_mean(matrices: np.ndarray) -> np.ndarray:
+    """The rotation closest to the average of several (SVD of the sum)."""
+    u, _, vt = np.linalg.svd(matrices.sum(axis=0))
+    rotation = u @ vt
+    if np.linalg.det(rotation) < 0:
+        u[:, -1] *= -1
+        rotation = u @ vt
+    return rotation
+
+
+def line_up(part: Part, previous_extrinsic: np.ndarray, previous_depth: np.ndarray, shared: int):
+    """Moves `part` into the global coordinates using the `shared` frames it has in common with the part
+    before it. Returns the alignment error (share of the scene depth), or None if there is nothing shared.
+
+    Rotation comes from the cameras of the shared frames, the scale from the depth the two parts see in
+    those frames (so it also works when the camera only turns on the spot), the position from the camera
+    centres.
+    """
+    if shared < 2:
+        return None
+    own_extrinsic = part.extrinsic[:shared].cpu().numpy()
+    own_depth = np.array([float(part.depth[i].median()) for i in range(shared)])
+    rotation = rotation_mean(np.einsum("mji,mjk->mik", previous_extrinsic[:, :, :3], own_extrinsic[:, :, :3]))
+    scale = float(np.median(previous_depth / np.maximum(own_depth, 1e-6)))
+    global_centers, own_centers = centers_of(previous_extrinsic), centers_of(own_extrinsic)
+    moved = scale * (rotation @ own_centers.T).T
+    shift = (global_centers - moved).mean(axis=0)
+    error = float(np.median(np.linalg.norm(moved + shift - global_centers, axis=1)) / max(np.median(previous_depth), 1e-6))
+
+    rotation_t = torch.tensor(rotation, dtype=torch.float32, device="cuda")
+    shift_t = torch.tensor(shift, dtype=torch.float32, device="cuda")
+    new_rotation = part.extrinsic[:, :, :3] @ rotation_t.T
+    new_translation = scale * part.extrinsic[:, :, 3] - torch.einsum("sij,j->si", new_rotation, shift_t)
+    part.extrinsic = torch.cat([new_rotation, new_translation[..., None]], dim=2)
+    part.depth = part.depth * scale
+    return error
+
+
+def sample_counts(seconds: list[float], fps: float, minimum: int, cap: int) -> list[int]:
+    """Frames per video: `fps` per second of film, at least `minimum`, shrunk to `cap` frames in total."""
+    counts = [max(minimum, round(s * fps)) for s in seconds]
+    while sum(counts) > cap and max(counts) > minimum:
+        counts[counts.index(max(counts))] -= 1
+    return counts
+
+
+def plan_parts(total: int, window: int, overlap: int) -> list[tuple[int, int]]:
+    """Overlapping [start, end) windows over `total` frames; each window starts where the last one
+    ends, minus `overlap` shared frames. A tiny remainder is folded into the last window."""
+    spans, start = [], 0
+    while True:
+        end = min(start + window, total)
+        if total - end < overlap + 4:
+            end = total
+        spans.append((start, end))
+        if end >= total:
+            return spans
+        start = end - overlap
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("videos", type=Path, nargs="+")
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--frames", type=int, default=72, help="frames shared across all videos")
+    parser.add_argument("--window", type=int, default=56, help="frames VGGT looks at together (lowered to fit the GPU)")
+    parser.add_argument("--overlap", type=int, default=12, help="frames shared by neighbouring windows")
+    parser.add_argument("--fps", type=float, default=1.5, help="frames taken per second of film")
+    parser.add_argument("--min-per-video", type=int, default=8)
+    parser.add_argument("--max-frames", type=int, default=400, help="frames for the whole room")
     parser.add_argument("--long-side", type=int, default=686, help="VGGT input size of the long image side")
     parser.add_argument("--detail", type=float, default=2.0, help="dense grid = VGGT grid x this")
     parser.add_argument("--upscale-model", type=Path, default=None, help="ESRGAN-style .safetensors/.pth")
@@ -301,8 +429,7 @@ def main() -> int:
                         help="neighbouring frames each point is checked against (0 = off)")
     parser.add_argument("--consistency-tolerance", type=float, default=0.03)
     parser.add_argument("--voxel-px", type=float, default=2.0, help="fusion voxel size in dense-grid pixels")
-    parser.add_argument("--reuse", action="store_true",
-                        help="skip frame extraction and VGGT if vggt.npz from an earlier run is present")
+    parser.add_argument("--reuse-frames", action="store_true", help="keep frames already cut in <out>/frames")
     parser.add_argument("--max-points", type=int, default=6_000_000)
     parser.add_argument("--view-points", type=int, default=3_000_000)
     parser.add_argument("--colmap", action="store_true",
@@ -316,161 +443,98 @@ def main() -> int:
         print("No CUDA GPU found. klecks never runs ML on the CPU; aborting.", file=sys.stderr)
         return 2
     started = time.time()
-    timings: dict[str, float] = {}
-    peak_vram = 0.0
+    args.out.mkdir(parents=True, exist_ok=True)
 
     # VGGT needs about 9.3 GB + 0.056 GB per frame at 392x686. When the card is full Windows quietly
-    # swaps GPU memory out and everything crawls instead of failing, so size the batch to what is free.
-    free_gb = torch.cuda.mem_get_info()[0] / 1e9
+    # swaps GPU memory out and everything crawls instead of failing, so size the window to what is free
+    # and cap this process: going over raises an out-of-memory error, answered below with a smaller window.
+    free_gb, total_gb = (value / 1e9 for value in torch.cuda.mem_get_info())
+    torch.cuda.set_per_process_memory_fraction(max(0.5, (total_gb - VRAM_CAP_MARGIN_GB) / total_gb))
     affordable = int((free_gb - VRAM_RESERVE_GB - VGGT_BASE_GB) / VGGT_GB_PER_FRAME)
-    if affordable < args.frames:
-        args.frames = max(MIN_FRAMES, affordable)
-        progress("frames", 1, f"Only {free_gb:.1f} GB of GPU memory is free, using {args.frames} frames")
-    args.out.mkdir(parents=True, exist_ok=True)
-    cache, frames_file = args.out / "vggt.npz", args.out / "frames.json"
+    window = max(MIN_FRAMES, min(args.window, affordable))
+    if window < args.window:
+        progress("frames", 1, f"Only {free_gb:.1f} GB of GPU memory is free, using {window} frames at a time")
 
-    if args.reuse and cache.exists() and frames_file.exists():
-        # 1+2 from an earlier run: same frames, same cameras and depth
-        meta = json.loads(frames_file.read_text())
-        frame_paths, per_video = [Path(p) for p in meta["paths"]], meta["per_video"]
-        height, width = meta["height"], meta["width"]
-        saved = np.load(cache)
-        extrinsic, intrinsic = (torch.from_numpy(saved[k]).cuda() for k in ("extrinsic", "intrinsic"))
-        depth, confidence = (torch.from_numpy(saved[k]).cuda() for k in ("depth", "confidence"))
-        progress("inference", 20, "Reusing cameras and depth from an earlier run")
-    else:
-        # 1. frames
-        progress("frames", 2, "Preparing frames")
-        seconds = [video_seconds(v) for v in args.videos]
-        budget = split_budget(seconds, args.frames)
-        frame_paths, per_video = [], []
-        for index, (video, count) in enumerate(zip(args.videos, budget)):
-            got = extract_frames(video, args.out / "frames", f"{index:02d}", count)
-            frame_paths += got
-            per_video.append(len(got))
-        if not frame_paths:
-            print("Could not read any frame from the videos", file=sys.stderr)
-            return 3
-        timings["frames"] = time.time() - started
+    # 1. frames, spread over every video by its length
+    progress("frames", 2, "Preparing frames")
+    seconds = [video_seconds(v) for v in args.videos]
+    counts = sample_counts(seconds, args.fps, args.min_per_video, args.max_frames)
+    frame_paths: list[Path] = []
+    for index, (video, count) in enumerate(zip(args.videos, counts)):
+        tag = f"{index:02d}"
+        existing = sorted((args.out / "frames").glob(f"{tag}_*.jpg")) if args.reuse_frames else []
+        frame_paths += existing or extract_frames(video, args.out / "frames", tag, count)
+        progress("frames", 2 + 6 * (index + 1) / len(args.videos), f"Preparing frames ({index + 1}/{len(args.videos)} videos)")
+    if not frame_paths:
+        print("Could not read any frame from the videos", file=sys.stderr)
+        return 3
 
-        # 2. cameras + depth for all frames at once
-        progress("model", 8, "Loading the model (the first run downloads 5 GB)")
-        dtype = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
-        model = VGGT.from_pretrained("facebook/VGGT-1B").to("cuda").eval()
-
-        progress("inference", 20, f"Estimating cameras and depth for {len(frame_paths)} frames")
-        tick = time.time()
-        images = load_for_vggt(frame_paths, args.long_side)
-        while True:
-            try:
-                predictions = run_vggt(model, images, dtype)
-                break
-            except torch.OutOfMemoryError:
-                # Out of GPU memory: use fewer frames rather than give up.
-                gc.collect(); torch.cuda.empty_cache()
-                keep = np.linspace(0, len(images) - 1, int(len(images) * 0.75), dtype=int)
-                if len(keep) < 8:
-                    print("Not enough GPU memory even for 8 frames.", file=sys.stderr)
-                    return 4
-                images = images[keep]
-                frame_paths = [frame_paths[i] for i in keep]
-                per_video = [int(sum(1 for k in keep if lo <= k < hi))
-                             for lo, hi in zip(np.cumsum([0] + per_video[:-1]), np.cumsum(per_video))]
-                progress("inference", 20, f"GPU memory is tight, using {len(frame_paths)} frames")
-        torch.cuda.synchronize()
-        timings["inference"] = time.time() - tick
-        peak_vram = torch.cuda.max_memory_allocated() / 1e9
-
-        height, width = (int(n) for n in images.shape[-2:])
-        extrinsic, intrinsic = pose_encoding_to_extri_intri(predictions["pose_enc"], (height, width))
-        extrinsic, intrinsic = extrinsic[0].float(), intrinsic[0].float()           # S,3,4 / S,3,3
-        depth = predictions["depth"][0, ..., 0].float()                             # S,H,W
-        confidence = predictions["depth_conf"][0].float()                           # S,H,W
-        del predictions, model
-        gc.collect(); torch.cuda.empty_cache()
-        np.savez_compressed(cache, extrinsic=extrinsic.cpu().numpy(), intrinsic=intrinsic.cpu().numpy(),
-                            depth=depth.cpu().numpy(), confidence=confidence.cpu().numpy())
-        frames_file.write_text(json.dumps({"paths": [str(p) for p in frame_paths], "per_video": per_video,
-                                           "height": height, "width": width}))
-    conf_threshold = float(torch.quantile(confidence.flatten()[::97], args.conf_percentile / 100.0))
-
-    # 3. dense, sharp points per frame, fused on the GPU
+    # 2. the model
+    progress("model", 8, "Loading the model (the first run downloads 5 GB)")
+    dtype = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
+    model = VGGT.from_pretrained("facebook/VGGT-1B").to("cuda").eval()
     upscaler = Upscaler(args.upscale_model) if args.upscale_model else None
-    grid_h, grid_w = int(height * args.detail), int(width * args.detail)
-    median_depth = float(depth.flatten()[::97].median())
-    focal = float(intrinsic[:, 0, 0].mean()) * grid_w / width
-    fusion = VoxelFusion(voxel=args.voxel_px * median_depth / focal)
-    ys, xs = torch.meshgrid(torch.arange(grid_h, device="cuda"), torch.arange(grid_w, device="cuda"), indexing="ij")
-    window = int(round(2.5 * args.detail)) * 2 + 1
-    neighbours = nearest_views(extrinsic, args.consistency_views, median_depth) if args.consistency_views else None
-    candidates = kept = 0
 
-    tick = time.time()
-    for i, path in enumerate(frame_paths):
-        progress("detail", 25 + 70 * i / len(frame_paths), f"Sharpening details ({i + 1}/{len(frame_paths)})")
-        source = cv2.cvtColor(cv2.imread(str(path)), cv2.COLOR_BGR2RGB)
-        rgb = torch.from_numpy(source).cuda().permute(2, 0, 1)[None].float() / 255.0
-        if upscaler:
-            rgb = upscaler(rgb)
-        color = F.interpolate(rgb, size=(grid_h, grid_w), mode="area")[0].permute(1, 2, 0) * 255.0   # grid_h,grid_w,3
-
-        d = F.interpolate(depth[i][None, None], size=(grid_h, grid_w), mode="bilinear", align_corners=False)
-        c = F.interpolate(confidence[i][None, None], size=(grid_h, grid_w), mode="bilinear", align_corners=False)[0, 0]
-        # Near an object border the blended depth floats in mid-air: drop pixels whose surroundings
-        # span a big share of their own depth.
-        span = F.max_pool2d(d, window, 1, window // 2) + F.max_pool2d(-d, window, 1, window // 2)
-        d = d[0, 0]
-        edge = (span[0, 0] / d.clamp(min=1e-6)) > args.edge_threshold
-        valid = (c >= conf_threshold) & (d > 0) & ~edge
-
-        K, (R, t) = intrinsic[i], (extrinsic[i, :, :3], extrinsic[i, :, 3])
-        fx, fy = K[0, 0] * grid_w / width, K[1, 1] * grid_h / height
-        cx, cy = K[0, 2] * grid_w / width, K[1, 2] * grid_h / height
-        z = d[valid]
-        camera_points = torch.stack([(xs[valid] - cx) / fx * z, (ys[valid] - cy) / fy * z, z], dim=1)
-        world_points = (camera_points - t) @ R                                  # R^T (Xc - t)
-        pixel_colors = color[valid]
-        candidates += len(world_points)
-        if neighbours is not None:
-            ok = agrees_with_neighbours(world_points, neighbours[i], extrinsic, intrinsic, depth,
-                                        args.consistency_tolerance)
-            world_points, pixel_colors = world_points[ok], pixel_colors[ok]
-        kept += len(world_points)
-        fusion.add(world_points, pixel_colors)
-        del rgb, color, d, c, edge, valid, camera_points, world_points, pixel_colors
-    timings["detail"] = time.time() - tick
-    del upscaler
+    # 3. window by window: cameras + depth, line up with the previous window, fuse into one cloud
+    while True:
+        try:
+            outcome = reconstruct(model, upscaler, frame_paths, window, args, dtype)
+            break
+        except torch.OutOfMemoryError:
+            gc.collect(); torch.cuda.empty_cache()
+            window = int(window * 0.75)
+            if window < MIN_FRAMES:
+                print("Not enough GPU memory even for a handful of frames.", file=sys.stderr)
+                return 4
+            progress("inference", 12, f"GPU memory is tight, using {window} frames at a time")
+    if outcome is None:
+        print("The first part could not be reconstructed.", file=sys.stderr)
+        return 5
+    fusion, kept, stats = outcome
+    del model, upscaler
     gc.collect(); torch.cuda.empty_cache()
 
     # 4. write
     progress("cloud", 96, "Building the 3D scene")
-    points, colors, counts = fusion.result()
+    points, colors, counts_per_voxel = fusion.result()
     del fusion
     full_points, full_colors = voxel_limit(points, colors, args.max_points)
     write_ply(args.out / "points.ply", full_points, full_colors)
     view_points, view_colors = voxel_limit(full_points, full_colors, args.view_points)
     write_ply(args.out / "scene.ply", view_points, view_colors)
 
-    centers = -np.einsum("sji,sj->si", extrinsic[:, :, :3].cpu().numpy(), extrinsic[:, :, 3].cpu().numpy())
-    spread = float(np.linalg.norm(centers - centers.mean(0), axis=1).max())
+    extrinsic = np.stack(kept["extrinsic"])
+    intrinsic = np.stack(kept["intrinsic"])
+    np.savez_compressed(args.out / "cameras.npz", extrinsic=extrinsic, intrinsic=intrinsic)
+    per_video = [sum(1 for p in kept["paths"] if p.name.startswith(f"{i:02d}_")) for i in range(len(args.videos))]
+    (args.out / "frames.json").write_text(json.dumps({
+        "paths": [str(p) for p in kept["paths"]], "per_video": per_video,
+        "height": stats["height"], "width": stats["width"], "boxes": [list(b) for b in kept["boxes"]]}))
+    centers = centers_of(extrinsic)
     report = {
         "videos": [v.name for v in args.videos],
         "frames_per_video": per_video,
-        "frames": len(frame_paths),
+        "frames": len(kept["paths"]),
+        "frames_sampled": len(frame_paths),
+        "parts": stats["parts"],
+        "parts_used": stats["parts_used"],
+        "stopped": stats["stopped"],
+        "worst_alignment_error": stats["worst_error"],
+        "window": window,
         "points": int(len(full_points)),
         "view_points": int(len(view_points)),
-        "views_per_point_mean": float(counts.mean()),
-        "kept_after_consistency": round(kept / max(candidates, 1), 3),
+        "views_per_point_mean": float(counts_per_voxel.mean()),
+        "kept_after_consistency": round(stats["kept"] / max(stats["candidates"], 1), 3),
         "upscaled": bool(args.upscale_model),
-        "inference_seconds": round(timings.get("inference", 0.0), 2),
-        "detail_seconds": round(timings["detail"], 2),
+        "detail_seconds": round(stats["dense_seconds"], 2),
         "total_seconds": round(time.time() - started, 1),
-        "peak_vram_gb": round(peak_vram, 1),
-        "camera_center_spread": spread,
-        "median_depth": median_depth,
+        "peak_vram_gb": round(torch.cuda.max_memory_allocated() / 1e9, 1),
+        "camera_center_spread": float(np.linalg.norm(centers - centers.mean(0), axis=1).max()),
+        "median_depth": stats["median_depth"],
     }
     (args.out / "report.json").write_text(json.dumps(report, indent=2))
-    np.savez_compressed(args.out / "cameras.npz", extrinsic=extrinsic.cpu().numpy(), intrinsic=intrinsic.cpu().numpy())
+    if stats["stopped"]:
+        progress("inference", 90, stats["stopped"])
     if args.colmap:
         from export_colmap import export_dataset  # imported late: it imports this module back
 
@@ -480,6 +544,106 @@ def main() -> int:
         )
     progress("done", 100, "Done")
     return 0
+
+
+def reconstruct(model, upscaler, frame_paths, window, args, dtype):
+    """All parts in order. Returns (fusion, kept cameras, stats), or None if even the first part fails.
+
+    Stops early, keeping what is lined up so far, when a part does not fit the one before it.
+    """
+    spans = plan_parts(len(frame_paths), window, args.overlap)
+    kept = {"paths": [], "boxes": [], "extrinsic": [], "intrinsic": []}
+    stats = {"parts": len(spans), "parts_used": 0, "stopped": "", "worst_error": 0.0, "candidates": 0, "kept": 0,
+             "dense_seconds": 0.0, "median_depth": 0.0, "height": 0, "width": 0}
+    fusion: VoxelFusion | None = None
+    previous = None  # (extrinsic in global coordinates, median depth) of the frames the next part shares
+
+    for number, (first, last) in enumerate(spans):
+        progress("inference", 12 + 80 * number / len(spans), f"Reconstructing part {number + 1} of {len(spans)}")
+        part = estimate_part(model, frame_paths[first:last], args.long_side, dtype)
+        shared = 0
+        if previous is not None:
+            shared = spans[number - 1][1] - first
+            error = line_up(part, previous[0][-shared:], previous[1][-shared:], shared)
+            if error is None or error > MAX_ALIGN_ERROR:
+                stats["stopped"] = (f"Part {number + 1} of {len(spans)} does not fit the one before it "
+                                    f"(off by {0 if error is None else error:.0%}); the room is built from the first {number}.")
+                break
+            stats["worst_error"] = max(stats["worst_error"], error)
+        if fusion is None:
+            stats["median_depth"] = float(part.depth.flatten()[::97].median())
+            stats["height"], stats["width"] = part.height, part.width
+            focal = float(part.intrinsic[:, 0, 0].mean()) * args.detail
+            fusion = VoxelFusion(voxel=args.voxel_px * stats["median_depth"] / focal)
+
+        started = time.time()
+        fuse_part(part, shared, fusion, upscaler, args, stats)
+        stats["dense_seconds"] += time.time() - started
+
+        own = slice(shared, None)  # frames shared with the part before were already taken from that one
+        extrinsic = part.extrinsic.cpu().numpy()
+        kept["paths"] += part.paths[own]
+        kept["boxes"] += part.boxes[own]
+        kept["extrinsic"] += list(extrinsic[own])
+        kept["intrinsic"] += list(part.intrinsic.cpu().numpy()[own])
+        stats["parts_used"] += 1
+
+        next_shared = (spans[number][1] - spans[number + 1][0]) if number + 1 < len(spans) else 0
+        if next_shared:
+            tail_depth = np.array([float(part.depth[i].median()) for i in range(len(part.paths) - next_shared, len(part.paths))])
+            previous = (extrinsic[-next_shared:], tail_depth)
+        del part
+        gc.collect(); torch.cuda.empty_cache()
+    return (fusion, kept, stats) if fusion is not None else None
+
+
+def fuse_part(part: Part, skip: int, fusion: VoxelFusion, upscaler, args, stats) -> None:
+    """Dense, sharp points of every frame of the part (except the first `skip`) into the shared cloud."""
+    grid_h, grid_w = int(part.height * args.detail), int(part.width * args.detail)
+    ys, xs = torch.meshgrid(torch.arange(grid_h, device="cuda"), torch.arange(grid_w, device="cuda"), indexing="ij")
+    window = int(round(2.5 * args.detail)) * 2 + 1
+    confidence_cut = float(torch.quantile(part.confidence.flatten()[::97], args.conf_percentile / 100.0))
+    median_depth = float(part.depth.flatten()[::97].median())
+    neighbours = nearest_views(part.extrinsic, args.consistency_views, median_depth) if args.consistency_views else None
+    box_tensor = torch.tensor([[x, y, x + w, y + h] for x, y, w, h in part.boxes], dtype=torch.float32, device="cuda")
+
+    for i in range(skip, len(part.paths)):
+        source = cv2.cvtColor(cv2.imread(str(part.paths[i])), cv2.COLOR_BGR2RGB)
+        rgb = torch.from_numpy(source).cuda().permute(2, 0, 1)[None].float() / 255.0
+        if upscaler:
+            rgb = upscaler(rgb)
+        # the picture sits inside the canvas (see load_for_vggt); everything around it is padding
+        bx, by, bw, bh = (int(round(v * args.detail)) for v in part.boxes[i])
+        picture = F.interpolate(rgb, size=(bh, bw), mode="area")[0].permute(1, 2, 0) * 255.0
+        color = torch.zeros((grid_h, grid_w, 3), device="cuda")
+        color[by:by + bh, bx:bx + bw] = picture
+        in_picture = torch.zeros((grid_h, grid_w), dtype=torch.bool, device="cuda")
+        in_picture[by:by + bh, bx:bx + bw] = True
+
+        d = F.interpolate(part.depth[i][None, None], size=(grid_h, grid_w), mode="bilinear", align_corners=False)
+        c = F.interpolate(part.confidence[i][None, None], size=(grid_h, grid_w), mode="bilinear", align_corners=False)[0, 0]
+        # Near an object border the blended depth floats in mid-air: drop pixels whose surroundings
+        # span a big share of their own depth.
+        span = F.max_pool2d(d, window, 1, window // 2) + F.max_pool2d(-d, window, 1, window // 2)
+        d = d[0, 0]
+        edge = (span[0, 0] / d.clamp(min=1e-6)) > args.edge_threshold
+        valid = (c >= confidence_cut) & (d > 0) & ~edge & in_picture
+
+        K, (R, t) = part.intrinsic[i], (part.extrinsic[i, :, :3], part.extrinsic[i, :, 3])
+        fx, fy = K[0, 0] * grid_w / part.width, K[1, 1] * grid_h / part.height
+        cx, cy = K[0, 2] * grid_w / part.width, K[1, 2] * grid_h / part.height
+        z = d[valid]
+        camera_points = torch.stack([(xs[valid] - cx) / fx * z, (ys[valid] - cy) / fy * z, z], dim=1)
+        world_points = (camera_points - t) @ R                                  # R^T (Xc - t)
+        pixel_colors = color[valid]
+        stats["candidates"] += len(world_points)
+        if neighbours is not None:
+            ok = agrees_with_neighbours(world_points, neighbours[i], part.extrinsic, part.intrinsic, part.depth,
+                                        box_tensor, args.consistency_tolerance)
+            world_points, pixel_colors = world_points[ok], pixel_colors[ok]
+        stats["kept"] += len(world_points)
+        fusion.add(world_points, pixel_colors)
+        del rgb, picture, color, in_picture, d, c, edge, valid, camera_points, world_points, pixel_colors
 
 
 if __name__ == "__main__":

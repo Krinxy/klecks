@@ -25,6 +25,8 @@ pub struct AppSection {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PathsSection {
+    /// Library of rooms (`rooms/<name>/` with videos) and furniture (`assets/<name>/`).
+    pub media_dir: String,
     pub models_dir: String,
     pub scans_dir: String,
     pub cache_dir: String,
@@ -54,14 +56,18 @@ pub struct ReconstructSettings {
     pub python: String,
     pub script: String,
     pub hf_home: String,
-    pub frames: u32,
+    /// Frames VGGT looks at together; lowered automatically to fit the graphics card.
+    pub window: u32,
+    /// Frames taken per second of film (long films are cut into overlapping windows).
+    pub frame_rate: f32,
+    /// Frames for the whole room.
+    pub max_frames: u32,
     pub conf_percentile: f32,
     pub view_points: u32,
     /// ESRGAN-style model that sharpens the training images; empty = off.
     pub upscale_model: String,
     /// `brush_app` executable that trains the Gaussian splat; empty = point cloud only.
     pub brush: String,
-    pub train_steps: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

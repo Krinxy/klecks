@@ -1,0 +1,11 @@
+[package]
+name = "klecks-library"
+description = "The media library: rooms (videos) and furniture assets (photos + dimensions)"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_yaml_ng.workspace = true

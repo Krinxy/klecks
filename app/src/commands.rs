@@ -1,7 +1,7 @@
 // ---
 // Owner: Krinxy <dominic.bechtold@icloud.com>
 // Contributors: Krinxy <dominic.bechtold@icloud.com>
-// Last modified: 2026-10-17
+// Last modified: 2026-10-18
 // ---
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -16,7 +16,6 @@ use tauri_plugin_dialog::DialogExt;
 use crate::state::{AppState, StartupHooks};
 
 const FALLBACK_EXTENSIONS: [&str; 5] = ["mp4", "mov", "mkv", "webm", "avi"];
-const RECENT_SCANS: usize = 6;
 
 #[derive(Serialize)]
 pub struct AppStatus {
@@ -37,25 +36,28 @@ pub struct VideoInfo {
     size_mb: f64,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct ScanListItem {
-    name: String,
-    modified_ms: u64,
-    result: ScanResult,
+    pub name: String,
+    /// The room this scan belongs to (the part of the folder name before the time stamp).
+    pub room: String,
+    pub modified_ms: u64,
+    pub result: ScanResult,
 }
 
 // The #[tauri::command] macro needs free functions, so these are thin shims over
 // AppState / the helpers below (same exception gutla makes).
 #[tauri::command]
 pub fn app_status(state: State<AppState>) -> AppStatus {
+    let config = state.config();
     AppStatus {
         version: env!("CARGO_PKG_VERSION"),
         gpu: state.gpu.as_ref().ok().cloned(),
         gpu_error: state.gpu.as_ref().err().cloned(),
-        config_error: state.config_error.clone(),
-        reconstruct_error: state.reconstructor.as_ref().err().cloned(),
-        preset: state.settings.as_ref().map(|s| s.pipeline.preset.clone()),
-        paths: state.paths.clone(),
+        config_error: config.error.clone(),
+        reconstruct_error: config.reconstructor.as_ref().err().cloned(),
+        preset: config.settings.as_ref().map(|s| s.pipeline.preset.clone()),
+        paths: config.paths.clone(),
         startup: state.startup.clone(),
     }
 }
@@ -119,21 +121,28 @@ pub fn accept_videos(paths: Vec<String>, state: State<AppState>) -> Result<Vec<V
         .collect()
 }
 
-/// Starts a reconstruction in the background. Progress arrives as events:
+/// Starts a reconstruction of loose videos. Progress arrives as events:
 /// `reconstruct://progress`, then one of `reconstruct://done`, `://failed`, `://cancelled`.
 #[tauri::command]
 pub fn start_reconstruction(app: tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
+    begin_scan(app, paths.into_iter().map(PathBuf::from).collect(), None)
+}
+
+/// Runs the reconstruction in the background; `name` names the scan folder (the room, if any).
+pub fn begin_scan(app: tauri::AppHandle, videos: Vec<PathBuf>, name: Option<String>) -> Result<(), String> {
     let (reconstructor, scans_dir, token) = {
         let state = app.state::<AppState>();
         // The GPU rule is checked here as well as inside the backend: never ML without a GPU.
         state.gpu.as_ref().map_err(|reason| reason.clone())?;
-        let reconstructor = state.reconstructor.as_ref().map_err(|reason| reason.clone())?.clone();
-        let scans_dir = state
+        let config = state.config();
+        let reconstructor = config.reconstructor.as_ref().map_err(|reason| reason.clone())?.clone();
+        let scans_dir = config
             .paths
             .as_ref()
             .ok_or("The configuration could not be loaded.")?
             .scans
             .clone();
+        drop(config);
         let token = CancelToken::new();
         let mut job = state.job.lock().map_err(|_| "Internal error: job lock poisoned")?;
         if job.is_some() {
@@ -143,8 +152,10 @@ pub fn start_reconstruction(app: tauri::AppHandle, paths: Vec<String>) -> Result
         (reconstructor, scans_dir, token)
     };
 
-    let videos: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
-    let request = ScanRequest::new(&videos, &scans_dir);
+    let request = match name {
+        Some(room) => ScanRequest::named(&videos, &scans_dir, &room),
+        None => ScanRequest::new(&videos, &scans_dir),
+    };
     std::thread::spawn(move || {
         let outcome = reconstructor.run(&request, &token, &mut |event| {
             let _ = app.emit("reconstruct://progress", event);
@@ -170,12 +181,16 @@ pub fn cancel_reconstruction(state: State<AppState>) {
     }
 }
 
-/// Earlier scans, newest first, so a finished scan survives restarting the app.
-#[tauri::command]
-pub fn list_scans(state: State<AppState>) -> Vec<ScanListItem> {
-    let Some(paths) = state.paths.as_ref() else {
-        return Vec::new();
-    };
+/// "livingroom-1792241488" -> "livingroom"; a folder without the time stamp is its own room.
+pub fn room_of_scan(folder: &str) -> String {
+    match folder.rsplit_once('-') {
+        Some((room, stamp)) if !room.is_empty() && stamp.chars().all(|c| c.is_ascii_digit()) => room.to_string(),
+        _ => folder.to_string(),
+    }
+}
+
+/// Every finished scan, newest first.
+pub fn all_scans(paths: &AppPaths) -> Vec<ScanListItem> {
     let mut scans: Vec<ScanListItem> = std::fs::read_dir(&paths.scans)
         .into_iter()
         .flatten()
@@ -189,22 +204,24 @@ pub fn list_scans(state: State<AppState>) -> Vec<ScanListItem> {
                 .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
                 .map(|elapsed| elapsed.as_millis() as u64)
                 .unwrap_or(0);
-            Some(ScanListItem {
-                name: entry.file_name().to_string_lossy().into_owned(),
-                modified_ms,
-                result,
-            })
+            let name = entry.file_name().to_string_lossy().into_owned();
+            Some(ScanListItem { room: room_of_scan(&name), name, modified_ms, result })
         })
         .collect();
     scans.sort_by_key(|scan| std::cmp::Reverse(scan.modified_ms));
-    scans.truncate(RECENT_SCANS);
     scans
 }
 
 /// Opens a scan folder, but only from inside the scans directory.
 #[tauri::command]
 pub fn open_scan(dir: String, state: State<AppState>) -> Result<ScanResult, String> {
-    let scans = state.paths.as_ref().ok_or("The configuration could not be loaded.")?.scans.clone();
+    let scans = state
+        .config()
+        .paths
+        .as_ref()
+        .ok_or("The configuration could not be loaded.")?
+        .scans
+        .clone();
     let requested: PathBuf = std::fs::canonicalize(&dir).map_err(|error| format!("Cannot open the scan: {error}"))?;
     let root = std::fs::canonicalize(&scans).map_err(|error| error.to_string())?;
     if !requested.starts_with(&root) {
@@ -240,10 +257,25 @@ fn has_extension(file: &Path, extensions: &[String]) -> bool {
         .is_some_and(|ext| extensions.contains(&ext))
 }
 
-fn allowed_extensions(state: &AppState) -> Vec<String> {
+pub fn allowed_extensions(state: &AppState) -> Vec<String> {
     state
+        .config()
         .settings
         .as_ref()
         .map(|settings| settings.capture.extensions.clone())
         .unwrap_or_else(|| FALLBACK_EXTENSIONS.iter().map(|ext| ext.to_string()).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::room_of_scan;
+
+    #[test]
+    fn scan_folders_map_back_to_their_room() {
+        assert_eq!(room_of_scan("livingroom-1792241488"), "livingroom");
+        assert_eq!(room_of_scan("living-room-1792241488"), "living-room");
+        assert_eq!(room_of_scan("5-videos-1792241488"), "5-videos");
+        assert_eq!(room_of_scan("kitchen"), "kitchen");
+        assert_eq!(room_of_scan("-1792241488"), "-1792241488");
+    }
 }

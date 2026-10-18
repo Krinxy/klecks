@@ -1,10 +1,10 @@
 // ---
 // Owner: Krinxy <dominic.bechtold@icloud.com>
 // Contributors: Krinxy <dominic.bechtold@icloud.com>
-// Last modified: 2026-10-17
+// Last modified: 2026-10-18
 // ---
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 
 use klecks_gpu::{GpuGuard, GpuInfo};
 use klecks_reconstruct::{CancelToken, PythonLabReconstructor, Reconstructor, ScanResult};
@@ -40,14 +40,47 @@ impl StartupHooks {
     }
 }
 
-/// Everything resolved once at startup. A missing GPU or broken config does not crash
-/// the window; it is kept as a message so the UI can show exactly what is wrong.
-pub struct AppState {
+/// Everything that depends on the settings. It is rebuilt when the user changes one, so a new
+/// preset or media folder applies right away without restarting the app.
+pub struct Config {
     pub settings: Option<Settings>,
     pub paths: Option<AppPaths>,
-    pub gpu: Result<GpuInfo, String>,
-    pub config_error: Option<String>,
+    pub error: Option<String>,
     pub reconstructor: Result<Arc<dyn Reconstructor>, String>,
+}
+
+impl Config {
+    fn load(loader: &SettingsLoader) -> Self {
+        match loader.load_with_paths() {
+            Ok((settings, paths)) => {
+                if let Err(error) = paths.ensure() {
+                    eprintln!("klecks: cannot create data directories: {error}");
+                }
+                let reconstructor = PythonLabReconstructor::new(&settings.pipeline, loader.default_dir())
+                    .map(|backend| Arc::new(backend) as Arc<dyn Reconstructor>)
+                    .map_err(|error| error.to_string());
+                Self { settings: Some(settings), paths: Some(paths), error: None, reconstructor }
+            }
+            Err(error) => Self::broken(error.to_string()),
+        }
+    }
+
+    fn broken(error: String) -> Self {
+        Self {
+            settings: None,
+            paths: None,
+            error: Some(error),
+            reconstructor: Err("configuration could not be loaded".into()),
+        }
+    }
+}
+
+/// Resolved at startup. A missing GPU or a broken config does not crash the window; it is kept as a
+/// message so the UI can show exactly what is wrong.
+pub struct AppState {
+    pub loader: Option<SettingsLoader>,
+    config: RwLock<Config>,
+    pub gpu: Result<GpuInfo, String>,
     /// Cancel handle of the scan that is running right now, if any.
     pub job: Mutex<Option<CancelToken>>,
     pub startup: StartupHooks,
@@ -55,43 +88,37 @@ pub struct AppState {
 
 impl AppState {
     pub fn boot() -> Self {
-        let loader = match SettingsLoader::discover() {
-            Ok(loader) => loader,
-            Err(error) => return Self::broken(error.to_string()),
+        let loader = SettingsLoader::discover();
+        let (loader, config) = match loader {
+            Ok(loader) => {
+                let config = Config::load(&loader);
+                (Some(loader), config)
+            }
+            Err(error) => (None, Config::broken(error.to_string())),
         };
-        let (settings, paths) = match loader.load_with_paths() {
-            Ok(loaded) => loaded,
-            Err(error) => return Self::broken(error.to_string()),
+        let gpu = match &config.settings {
+            Some(settings) => GpuGuard::new(&settings.gpu).detect().map_err(|error| error.to_string()),
+            None => Err("GPU check skipped: configuration could not be loaded".into()),
         };
-        let gpu = GpuGuard::new(&settings.gpu)
-            .detect()
-            .map_err(|error| error.to_string());
-        if let Err(error) = paths.ensure() {
-            eprintln!("klecks: cannot create data directories: {error}");
-        }
-        let reconstructor = PythonLabReconstructor::new(&settings.pipeline.reconstruct, loader.default_dir())
-            .map(|backend| Arc::new(backend) as Arc<dyn Reconstructor>)
-            .map_err(|error| error.to_string());
         Self {
-            settings: Some(settings),
-            paths: Some(paths),
+            loader,
+            config: RwLock::new(config),
             gpu,
-            config_error: None,
-            reconstructor,
             job: Mutex::new(None),
             startup: StartupHooks::from_env(),
         }
     }
 
-    fn broken(config_error: String) -> Self {
-        Self {
-            settings: None,
-            paths: None,
-            gpu: Err("GPU check skipped: configuration could not be loaded".into()),
-            config_error: Some(config_error),
-            reconstructor: Err("configuration could not be loaded".into()),
-            job: Mutex::new(None),
-            startup: StartupHooks::default(),
+    /// The current settings-derived state. Keep the guard short-lived.
+    pub fn config(&self) -> RwLockReadGuard<'_, Config> {
+        self.config.read().expect("config lock is never poisoned by a panic-free writer")
+    }
+
+    /// Re-reads all settings files (after the user changed one).
+    pub fn reload(&self) {
+        if let Some(loader) = &self.loader {
+            let fresh = Config::load(loader);
+            *self.config.write().expect("config lock is never poisoned by a panic-free writer") = fresh;
         }
     }
 }

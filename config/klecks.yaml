@@ -9,6 +9,9 @@ app:
 # Empty string = platform default (see `paths` in README). Absolute path = override.
 # Models are multi-GB: point `models_dir` at a big drive, e.g. D:\Models\klecks
 paths:
+  # Library: media_dir/rooms/<room>/ holds the videos of one room, media_dir/assets/<item>/ a piece of
+  # furniture (photos + asset.yaml). Empty = a `media/` folder next to the program or its repo, else the data dir.
+  media_dir: ""
   models_dir: ""
   scans_dir: ""
   cache_dir: ""

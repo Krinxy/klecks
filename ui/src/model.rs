@@ -37,8 +37,80 @@ pub struct ScanResult {
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct ScanListItem {
     pub name: String,
+    /// The room the scan belongs to (the scan folder's name without its time stamp).
+    pub room: String,
     pub modified_ms: u64,
     pub result: ScanResult,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct RoomVideo {
+    pub name: String,
+    pub path: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct Room {
+    pub id: String,
+    pub name: String,
+    pub dir: String,
+    pub videos: Vec<RoomVideo>,
+}
+
+/// A room of the library with what has been scanned of it so far.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct RoomView {
+    pub room: Room,
+    pub total_mb: f64,
+    pub scan_count: usize,
+    pub latest_scan: Option<ScanListItem>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+pub struct AssetSize {
+    pub width_cm: f32,
+    pub depth_cm: f32,
+    pub height_cm: f32,
+}
+
+/// One piece of furniture of the catalog.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct Asset {
+    pub id: String,
+    pub name: String,
+    pub category: String,
+    pub size: Option<AssetSize>,
+    pub notes: String,
+    pub source_url: String,
+    pub images: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct PresetView {
+    pub id: String,
+    pub train_iterations: u32,
+    pub max_splats: u32,
+    pub minutes: u32,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct FolderView {
+    pub kind: String,
+    pub label: String,
+    pub path: String,
+    /// The settings key that moves this folder; None = read-only.
+    pub setting: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct SettingsView {
+    pub preset: String,
+    pub presets: Vec<PresetView>,
+    pub upscale_model: String,
+    pub brush: String,
+    pub reconstruct_error: Option<String>,
+    pub folders: Vec<FolderView>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
@@ -86,7 +158,13 @@ pub enum DropState {
 /// Which screen the app is on.
 #[derive(Debug, Clone, PartialEq)]
 pub enum View {
-    Welcome,
+    /// The start menu.
+    Menu,
+    /// Drop loose videos to scan them.
+    NewScan,
+    Rooms,
+    Catalog,
+    Settings,
     Scanning(String),
     Viewing(ScanResult),
     Failed(String),

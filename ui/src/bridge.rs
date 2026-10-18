@@ -50,6 +50,20 @@ impl TauriBridge {
         invoke_raw(command, args).await.map(|_| ()).map_err(Self::describe)
     }
 
+    /// Builds `{ key: value, ... }` for a command with text arguments.
+    pub fn map(pairs: &[(&str, &str)]) -> JsValue {
+        let object = js_sys::Object::new();
+        for (key, value) in pairs {
+            let _ = js_sys::Reflect::set(&object, &(*key).into(), &(*value).into());
+        }
+        object.into()
+    }
+
+    /// The address under which the webview may load a file from disk (the asset protocol).
+    pub fn file_url(path: &str) -> String {
+        convert_file_src(path)
+    }
+
     /// Builds `{ key: [value, ...] }` for a command argument that is a list of strings.
     pub fn args(key: &str, values: &[String]) -> JsValue {
         let list = js_sys::Array::new();

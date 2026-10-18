@@ -5,6 +5,7 @@
 // ---
 mod error;
 mod loader;
+mod overrides;
 mod paths;
 mod schema;
 

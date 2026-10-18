@@ -55,6 +55,26 @@ When running the built exe from a target dir, set `KLECKS_CONFIG_DIR`.
   for AMD when that work starts.
 - Brush v0.3.0 was verified on the RTX 4080 (about 10 minutes for 30,000 steps on 72 images); it is
   still a young project, so keep it behind the `PythonLabReconstructor` stage and pin the version.
+- Rooms are folders in `media/rooms/<room>/` (all videos of a room are one scene), furniture is
+  `media/assets/<item>/` (photos + `asset.yaml`); `core/library` reads them on demand, nothing is cached.
+  Scan folders are named `<room>-<unix time>`; that is how scans are matched to rooms.
+- The Settings screen writes `%APPDATA%\klecks\*.yaml` through `UserOverrides` (comments are not
+  kept) and `AppState::reload()` applies it without a restart. Only whitelisted keys may be set
+  from the UI (`EDITABLE` in `app/src/library_commands.rs`); folders are opened by name, never by path.
+- `lab/room_scan.py` cuts frames with ffmpeg (`fps` filter: a `select` of hundreds of frame numbers
+  overflows its parser, "Cannot allocate memory"), applies the rotation tag, tone-maps HDR clips (HLG/PQ)
+  and caps frames at 1920 px. A film that yields no frames must fail loudly, never be skipped.
+- Films of one room may be portrait and landscape mixed: frames of different shape are centred on a
+  common canvas with white padding and each frame keeps a `box`; the padding is ignored in fusion and
+  per-frame COLMAP intrinsics are taken relative to the box.
+- VGGT only handles ~50-70 frames at once, so a room is reconstructed in overlapping windows (`window`,
+  `overlap`, `frame_rate`, `max_frames`) that are lined up one after the other: rotation from the cameras of
+  the shared frames, scale from their depth, position from the camera centres. A window that does not fit
+  (alignment error > 35 % of the scene depth) stops the chain and the room keeps what was lined up.
+- The process caps its own GPU memory (`set_per_process_memory_fraction`): when the card is full Windows
+  swaps silently and everything crawls, an out-of-memory error is the better failure (it halves the window).
+- Training length and splat limit come from the quality preset (`pipeline.presets`), not from a
+  separate setting.
 - Machine-specific paths (lab python, HF cache, scans dir) live in `%APPDATA%\klecks\*.yaml`
   overrides, never in `config/`. The reconstruct backend refuses to start when they are missing.
 - Dev builds find `config/` as a copy in `target/debug/config` (Tauri copies resources), so
@@ -74,7 +94,7 @@ When running the built exe from a target dir, set `KLECKS_CONFIG_DIR`.
 - The viewer reads scans through Tauri's asset protocol (`protocol-asset` feature, scope set at
   runtime to the scans dir); the CSP needs `asset:` and `http://asset.localhost` in `connect-src`.
 - Phone videos carry a rotation tag (`rotation=-90`) that OpenCV ignores: always rotate frames
-  explicitly when extracting (see `lab/room_scan.py`), or models get sideways images. VGGT's own loader
+  explicitly when extracting (see `lab/room_scan.py`; read it from ffprobe's JSON, HDR clips list several side-data blocks), or models get sideways images. VGGT's own loader
   also centre-crops portrait frames to a square; `room_scan.py` resizes the whole frame instead.
 - VGGT weights are CC-BY-NC-4.0 (non-commercial). Keep that in mind before distributing klecks.
 - Lab env lives at `D:\Projects\klecks-lab` (conda `-p`), run outputs in `D:\Projects\klecks-runs`;

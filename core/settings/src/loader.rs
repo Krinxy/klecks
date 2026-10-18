@@ -42,6 +42,21 @@ impl SettingsLoader {
         &self.default_dir
     }
 
+    /// Saves one setting (`pipeline.preset`, `paths.media_dir`, ...) in the user's override file.
+    pub fn set_override(&self, dotted_key: &str, value: Value) -> Result<(), SettingsError> {
+        crate::overrides::UserOverrides::new(self.user_dir.clone()).set(dotted_key, value)
+    }
+
+    /// `set_override` for the common case of a text value (a preset name, a folder).
+    pub fn set_text_override(&self, dotted_key: &str, value: &str) -> Result<(), SettingsError> {
+        self.set_override(dotted_key, Value::String(value.to_string()))
+    }
+
+    /// Removes a saved setting so the shipped default applies again.
+    pub fn clear_override(&self, dotted_key: &str) -> Result<(), SettingsError> {
+        crate::overrides::UserOverrides::new(self.user_dir.clone()).clear(dotted_key)
+    }
+
     pub fn load(&self) -> Result<Settings, SettingsError> {
         let mut merged = Value::Mapping(Mapping::new());
         Self::overlay_dir(&mut merged, &self.default_dir)?;
@@ -54,7 +69,7 @@ impl SettingsLoader {
     /// Settings plus the resolved storage locations.
     pub fn load_with_paths(&self) -> Result<(Settings, AppPaths), SettingsError> {
         let settings = self.load()?;
-        let paths = AppPaths::resolve(&settings.paths);
+        let paths = AppPaths::resolve(&settings.paths, &self.default_dir);
         Ok((settings, paths))
     }
 

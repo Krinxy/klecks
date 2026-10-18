@@ -7,22 +7,10 @@ use leptos::prelude::*;
 
 use crate::bridge::Viewer3d;
 use crate::flow::ScanFlow;
+use crate::format::with_commas;
 use crate::model::ScanResult;
 
 const HOST_ID: &str = "klecks-viewer";
-
-/// 12345678 -> "12,345,678"
-fn with_commas(value: u64) -> String {
-    let digits = value.to_string();
-    let mut out = String::new();
-    for (index, digit) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(digit);
-    }
-    out
-}
 
 /// The finished scene: fly through the point cloud of your room.
 #[component]
@@ -66,7 +54,7 @@ pub fn SceneViewer(scan: ScanResult, flow: ScanFlow) -> impl IntoView {
                 <span class="chip">{move || summary.get()}</span>
                 <span class="spacer"></span>
                 <button class="btn btn-ghost" on:click=move |_| Viewer3d::reset_view()>"Reset view"</button>
-                <button class="btn btn-primary" on:click=move |_| flow.home()>"New scan"</button>
+                <button class="btn btn-primary" on:click=move |_| flow.home()>"Menu"</button>
             </div>
             <p class="hud-hint">"Drag to look around, scroll to zoom, W A S D to walk, right-drag to pan."</p>
             <Show when=move || loading.get()>

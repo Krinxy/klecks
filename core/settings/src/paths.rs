@@ -10,6 +10,7 @@ use serde::Serialize;
 use crate::schema::PathsSection;
 
 const APP_DIR: &str = "klecks";
+const MAX_PARENT_LEVELS: usize = 6;
 
 /// Resolved, absolute locations for everything klecks writes.
 ///
@@ -19,20 +20,30 @@ const APP_DIR: &str = "klecks";
 pub struct AppPaths {
     pub user_config: PathBuf,
     pub data: PathBuf,
+    pub media: PathBuf,
     pub models: PathBuf,
     pub scans: PathBuf,
     pub cache: PathBuf,
 }
 
 impl AppPaths {
-    pub fn resolve(section: &PathsSection) -> Self {
+    /// `config_dir` is the shipped `config/` folder; a `media/` folder next to it or above it (a repo
+    /// checkout) is used when `media_dir` is empty.
+    pub fn resolve(section: &PathsSection, config_dir: &Path) -> Self {
         let user_config = dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(APP_DIR);
         let data = dirs::data_local_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(APP_DIR);
+        let nearby_media = config_dir
+            .ancestors()
+            .skip(1)
+            .take(MAX_PARENT_LEVELS)
+            .map(|dir| dir.join("media"))
+            .find(|dir| dir.is_dir());
         Self {
+            media: Self::pick(&section.media_dir, || nearby_media.unwrap_or_else(|| data.join("media"))),
             models: Self::pick(&section.models_dir, || data.join("models")),
             scans: Self::pick(&section.scans_dir, || data.join("scans")),
             cache: Self::pick(&section.cache_dir, || data.join("cache")),
@@ -43,7 +54,15 @@ impl AppPaths {
 
     /// Creates all directories klecks writes to.
     pub fn ensure(&self) -> std::io::Result<()> {
-        for dir in [&self.user_config, &self.data, &self.models, &self.scans, &self.cache] {
+        for dir in [
+            &self.user_config,
+            &self.data,
+            &self.media.join("rooms"),
+            &self.media.join("assets"),
+            &self.models,
+            &self.scans,
+            &self.cache,
+        ] {
             std::fs::create_dir_all(dir)?;
         }
         Ok(())

@@ -30,7 +30,7 @@ fn main() {
     let gpu = GpuGuard::new(&settings.gpu).detect().expect("no allowed GPU");
     println!("GPU: {}", gpu.name);
 
-    let backend = PythonLabReconstructor::new(&settings.pipeline.reconstruct, loader.default_dir())
+    let backend = PythonLabReconstructor::new(&settings.pipeline, loader.default_dir())
         .expect("backend not configured");
     let request = ScanRequest::new(&videos, &paths.scans);
     println!("scan folder: {}", request.scan_dir.display());

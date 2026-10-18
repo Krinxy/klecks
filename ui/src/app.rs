@@ -8,7 +8,8 @@ use wasm_bindgen::JsValue;
 
 use crate::bridge::TauriBridge;
 use crate::components::{
-    dropzone::DropZone, scan_progress::ScanProgress, scene_viewer::SceneViewer, stage::Stage,
+    catalog::CatalogScreen, dropzone::DropZone, menu::MainMenu, rooms::RoomsScreen,
+    scan_progress::ScanProgress, scene_viewer::SceneViewer, settings::SettingsScreen, stage::Stage,
     statusbar::StatusBar, titlebar::TitleBar,
 };
 use crate::flow::ScanFlow;
@@ -39,6 +40,16 @@ pub fn App() -> impl IntoView {
         }
     });
 
+    // Esc goes back to the menu from the menu screens (never while a scan runs or a scene is open).
+    let escape = window_event_listener(leptos::ev::keydown, move |event| {
+        if event.key() == "Escape"
+            && matches!(flow.view.get_untracked(), View::NewScan | View::Rooms | View::Catalog | View::Settings)
+        {
+            flow.home();
+        }
+    });
+    on_cleanup(move || escape.remove());
+
     let version = Signal::derive(move || {
         status
             .get()
@@ -57,7 +68,11 @@ pub fn App() -> impl IntoView {
             <TitleBar version=version />
             <main class="canvas">
                 {move || match flow.view.get() {
-                    View::Welcome => view! { <DropZone blocker=blocker flow=flow /> }.into_any(),
+                    View::Menu => view! { <MainMenu flow=flow /> }.into_any(),
+                    View::NewScan => view! { <DropZone blocker=blocker flow=flow /> }.into_any(),
+                    View::Rooms => view! { <RoomsScreen flow=flow blocker=blocker /> }.into_any(),
+                    View::Catalog => view! { <CatalogScreen flow=flow /> }.into_any(),
+                    View::Settings => view! { <SettingsScreen flow=flow status=status /> }.into_any(),
                     View::Scanning(name) => view! { <ScanProgress name=name flow=flow /> }.into_any(),
                     View::Viewing(scan) => view! { <SceneViewer scan=scan flow=flow /> }.into_any(),
                     View::Failed(message) => view! {

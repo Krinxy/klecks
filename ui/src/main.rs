@@ -7,6 +7,7 @@ mod app;
 mod bridge;
 mod components;
 mod flow;
+mod format;
 mod model;
 
 use app::App;

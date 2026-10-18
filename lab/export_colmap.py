@@ -55,6 +55,7 @@ def export_dataset(run: Path, points_count: int = 300_000, upscale_model: Path |
     extrinsic, intrinsic = cameras["extrinsic"], cameras["intrinsic"]
     frames = [Path(p) for p in meta["paths"]]
     model_h, model_w = meta["height"], meta["width"]
+    boxes = meta.get("boxes") or [[0, 0, model_w, model_h]] * len(frames)
 
     root = run / "colmap"
     if root.exists():
@@ -78,9 +79,11 @@ def export_dataset(run: Path, points_count: int = 300_000, upscale_model: Path |
         name = f"{index:04d}.jpg"
         cv2.imwrite(str(root / "images" / name), image, [cv2.IMWRITE_JPEG_QUALITY, 97])
 
+        # VGGT's intrinsics refer to the canvas; the picture sits at (bx, by) with size (bw, bh) on it
+        bx, by, bw, bh = boxes[index]
         K = intrinsic[index]
-        fx, fy = K[0, 0] * width / model_w, K[1, 1] * height / model_h
-        cx, cy = K[0, 2] * width / model_w, K[1, 2] * height / model_h
+        fx, fy = K[0, 0] * width / bw, K[1, 1] * height / bh
+        cx, cy = (K[0, 2] - bx) * width / bw, (K[1, 2] - by) * height / bh
         camera_lines.append(f"{index + 1} PINHOLE {width} {height} {fx:.6f} {fy:.6f} {cx:.6f} {cy:.6f}")
         qw, qx, qy, qz = quaternion(extrinsic[index, :, :3])
         tx, ty, tz = extrinsic[index, :, 3]
