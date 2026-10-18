@@ -75,6 +75,7 @@ pub async fn pick_videos(
         .dialog()
         .file()
         .add_filter("Video", &extension_refs)
+        .add_filter("Photo", &["jpg", "jpeg", "png", "webp"])
         .blocking_pick_files();
     Ok(picked
         .unwrap_or_default()

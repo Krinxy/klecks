@@ -58,6 +58,8 @@ pub struct Room {
     pub videos: Vec<RoomVideo>,
     #[serde(default)]
     pub kind: String,
+    #[serde(default)]
+    pub photos: Vec<RoomVideo>,
 }
 
 /// A room of the library with what has been scanned of it so far.
@@ -75,6 +77,9 @@ pub struct RoomView {
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct VideoShare {
     pub name: String,
+    /// "video" or "photo"
+    #[serde(default)]
+    pub kind: String,
     pub size_mb: f64,
     pub frames: u32,
     pub share_pct: u8,

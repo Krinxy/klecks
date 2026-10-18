@@ -48,6 +48,15 @@ pub fn clock(seconds: u32) -> String {
     }
 }
 
+/// "7 videos", "7 videos and 12 photos" or "12 photos".
+pub fn media_count(videos: usize, photos: usize) -> String {
+    match (videos, photos) {
+        (v, 0) => count_of(v, "video", "videos"),
+        (0, p) => count_of(p, "photo", "photos"),
+        (v, p) => format!("{} and {}", count_of(v, "video", "videos"), count_of(p, "photo", "photos")),
+    }
+}
+
 /// "Draft" from "draft".
 pub fn capitalised(text: &str) -> String {
     let mut chars = text.chars();

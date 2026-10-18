@@ -79,19 +79,19 @@ pub fn RoomScreen(id: String, flow: ScanFlow, #[prop(into)] blocker: Signal<Opti
 }
 
 fn room_body(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String>>, pane: RwSignal<Pane>) -> impl IntoView {
-    let has_videos = !data.room.videos.is_empty();
+    let has_videos = !data.room.videos.is_empty() || !data.room.photos.is_empty();
     let scanned = data.scan.is_some();
     let room_id = data.room.id.clone();
     let room_name = data.room.name.clone();
     let subtitle = match &data.scan {
         Some(scan) => format!(
             "{}, {} in the scene, {} from {}",
-            count_of(data.room.videos.len(), "video", "videos"),
+            crate::format::media_count(data.room.videos.len(), data.room.photos.len()),
             count_of(data.frames as usize, "frame", "frames"),
             if scan.result.kind == "splats" { "splat scene" } else { "point cloud" },
             when(scan.modified_ms)
         ),
-        None => format!("{}, not scanned yet", count_of(data.room.videos.len(), "video", "videos")),
+        None => format!("{}, not scanned yet", crate::format::media_count(data.room.videos.len(), data.room.photos.len())),
     };
     let newer = data.videos.iter().filter(|video| !video.scanned).count();
     let scan_result = data.scan.as_ref().map(|scan| scan.result.clone());
@@ -143,7 +143,7 @@ fn room_body(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String>>
                                 flow.go(View::Room(again));
                             }
                         });
-                    }>"Add videos"</button>
+                    }>"Add films or photos"</button>
                     <button
                         class="btn btn-primary"
                         disabled=move || !can_scan()
@@ -259,7 +259,9 @@ fn media_row(video: VideoShare, rank: usize, score: Option<VideoScore>, footprin
     let sees = score.as_ref().map(|score| percent(score.seen));
     let only = score.as_ref().map(|score| percent(score.unique));
     let bar = sees.unwrap_or(video.share_pct);
-    let detail = if !video.scanned {
+    let detail = if video.kind == "photo" {
+        format!("{}, {:.0} MB", if video.scanned { "Photo" } else { "New photo" }, video.size_mb)
+    } else if !video.scanned {
         format!("New, {:.0} MB", video.size_mb)
     } else if let Some(sees) = sees {
         format!("{}, {:.0} MB, sees {sees}% of the room", count_of(video.frames as usize, "frame", "frames"), video.size_mb)

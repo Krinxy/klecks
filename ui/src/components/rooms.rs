@@ -10,7 +10,7 @@ use crate::bridge::TauriBridge;
 use crate::components::room_picture::{add_videos_flow, kind_icon, NewRoom, RoomPicture};
 use crate::components::screen::Screen;
 use crate::flow::ScanFlow;
-use crate::format::{clock, count_of, when};
+use crate::format::{clock, when};
 use crate::model::{Apartment, RoomOverview, RoomView, ScanEntry, ScanListItem, View};
 
 fn reveal(kind: &'static str) {
@@ -140,10 +140,11 @@ fn rail_item(entry: RoomView, selected: RwSignal<Option<String>>) -> impl IntoVi
     let id_class = id.clone();
     let id_click = id.clone();
     let id_hover = id;
-    let note = match (&entry.latest_scan, entry.room.videos.is_empty()) {
-        (_, true) => "No videos".to_string(),
-        (Some(_), _) => count_of(entry.room.videos.len(), "video", "videos"),
-        (None, _) => format!("{}, not scanned", count_of(entry.room.videos.len(), "video", "videos")),
+    let media = crate::format::media_count(entry.room.videos.len(), entry.room.photos.len());
+    let note = match (&entry.latest_scan, entry.room.videos.is_empty() && entry.room.photos.is_empty()) {
+        (_, true) => "No films or photos".to_string(),
+        (Some(_), _) => media,
+        (None, _) => format!("{media}, not scanned"),
     };
     let scanned = entry.latest_scan.is_some();
     view! {
@@ -167,7 +168,7 @@ fn rail_item(entry: RoomView, selected: RwSignal<Option<String>>) -> impl IntoVi
 }
 
 fn room_detail(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String>>) -> impl IntoView {
-    let has_videos = !data.room.videos.is_empty();
+    let has_videos = !data.room.videos.is_empty() || !data.room.photos.is_empty();
     let scanned = data.scan.is_some();
     let id = data.room.id.clone();
     let name = data.room.name.clone();
@@ -207,7 +208,7 @@ fn room_detail(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String
                 <h2 class="detail-name">{data.room.name.clone()}</h2>
                 <p class="detail-status" class:is-done=scanned>{status}</p>
                 <dl class="stats">
-                    <div><dt>"Videos"</dt><dd>{data.room.videos.len()}</dd></div>
+                    <div><dt>"Films and photos"</dt><dd>{data.room.videos.len() + data.room.photos.len()}</dd></div>
                     <div><dt>"Frames in scene"</dt><dd>{if scanned { data.frames.to_string() } else { "-".to_string() }}</dd></div>
                     <div><dt>"Well covered"</dt><dd>{covered.map(|pct| format!("{pct}%")).unwrap_or_else(|| "-".into())}</dd></div>
                     <div><dt>"Scans"</dt><dd>{tries}</dd></div>
@@ -225,7 +226,7 @@ fn room_detail(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String
                                 reload.go(View::Room(again));
                             }
                         });
-                    }>"Add videos"</button>
+                    }>"Add films or photos"</button>
                     <button
                         class=if scanned { "btn btn-ghost" } else { "btn btn-primary" }
                         disabled=move || !can_scan()
@@ -235,7 +236,7 @@ fn room_detail(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String
                     </button>
                 </div>
                 {move || has_videos.then(|| blocker.get()).flatten().map(|reason| view! { <p class="room-blocker">{reason}</p> })}
-                {(!has_videos).then(|| view! { <p class="room-blocker">"This room has no videos yet. Put them in its folder."</p> })}
+                {(!has_videos).then(|| view! { <p class="room-blocker">"This room has no films or photos yet. Add some."</p> })}
             </div>
         </div>
 

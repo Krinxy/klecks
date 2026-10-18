@@ -16,6 +16,7 @@ use crate::model::{RoomOverview, SettingsView};
 struct Film {
     name: String,
     size_mb: f64,
+    photo: bool,
     was_scanned: bool,
     ticked: RwSignal<bool>,
 }
@@ -35,11 +36,14 @@ pub fn ScanPlan(room_id: String, label: String, flow: ScanFlow, #[prop(into)] bl
                         .room
                         .videos
                         .iter()
-                        .map(|video| {
+                        .map(|video| (video, false))
+                        .chain(data.room.photos.iter().map(|photo| (photo, true)))
+                        .map(|(video, photo)| {
                             let known = data.videos.iter().find(|share| share.name == video.name);
                             Film {
                                 name: video.name.clone(),
                                 size_mb: video.size_bytes as f64 / (1024.0 * 1024.0),
+                                photo,
                                 was_scanned: known.is_some_and(|share| share.scanned),
                                 ticked: RwSignal::new(known.is_none_or(|share| share.included)),
                             }
@@ -82,7 +86,7 @@ pub fn ScanPlan(room_id: String, label: String, flow: ScanFlow, #[prop(into)] bl
         <div class="modal" role="dialog" aria-modal="true" aria-label="Choose the films for the scan">
             <div class="plate modal-card">
                 <h2 class="modal-title">{format!("Reconstruct {label}")}</h2>
-                <p class="modal-text">"Tick the films that should go into the room. Films you leave out stay in the folder and are not used."</p>
+                <p class="modal-text">"Tick the films and photos that should go into the room. What you leave out stays in the folder and is not used. Sharp photos from many spots make the room crisper than films."</p>
                 {move || match films.get() {
                     None => view! { <p class="screen-note">"Looking at the films…"</p> }.into_any(),
                     Some(Err(message)) => view! { <p class="room-blocker">{message}</p> }.into_any(),
@@ -104,7 +108,7 @@ pub fn ScanPlan(room_id: String, label: String, flow: ScanFlow, #[prop(into)] bl
                                             />
                                             <span class="film-name">{film.name.clone()}</span>
                                             <span class="film-meta">
-                                                {format!("{:.0} MB", film.size_mb)}
+                                                {format!("{}{:.0} MB", if film.photo { "Photo, " } else { "" }, film.size_mb)}
                                                 {if film.was_scanned { "" } else { ", new" }}
                                             </span>
                                         </label>
@@ -123,7 +127,7 @@ pub fn ScanPlan(room_id: String, label: String, flow: ScanFlow, #[prop(into)] bl
                             .get()
                             .map(|(name, minutes)| format!(" Quality {name}: about {minutes} minutes of training, plus a few minutes to reconstruct."))
                             .unwrap_or_default();
-                        format!("{} of {} ticked, {total:.0} MB.{time}", picked.len(), count_of(all, "film", "films"))
+                        format!("{} of {} ticked, {total:.0} MB.{time}", picked.len(), count_of(all, "file", "files"))
                     }}
                 </p>
                 {move || blocker.get().map(|reason| view! { <p class="room-blocker">{reason}</p> })}

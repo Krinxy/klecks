@@ -25,6 +25,7 @@ import argparse
 from dataclasses import dataclass
 import gc
 import json
+import shutil
 import subprocess
 import sys
 import time
@@ -92,6 +93,96 @@ def video_seconds(video: Path) -> float:
     return probe_video(video)["duration"]
 
 
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+CANDIDATE_RATE = 6      # candidate frames per second of film when the sharpest one of every moment is chosen
+CANDIDATE_SIDE = 640    # size the candidates are judged at
+PICK_THREADS = 4        # frames cut out at the same time
+
+
+def is_photo(path: Path) -> bool:
+    return path.suffix.lower() in IMAGE_EXTENSIONS
+
+
+def read_photos(photos: list[Path], out_dir: Path, first_tag: int) -> list[tuple[int, list[Path], list[str]]]:
+    """Photos as frames, upright and at most FRAME_LONG_SIDE large. Photos of one size share a tag (they came from
+    one lens setting; COLMAP gives each tag its own camera). Returns (tag, frames, original file names) per size."""
+    from PIL import Image, ImageOps
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    groups: dict[tuple[int, int], tuple[int, list[Path], list[str]]] = {}
+    for photo in photos:
+        try:
+            image = ImageOps.exif_transpose(Image.open(photo)).convert("RGB")
+        except Exception as error:
+            print(f"Cannot read {photo.name}: {error}", file=sys.stderr)
+            continue
+        scale = FRAME_LONG_SIDE / max(image.size)
+        if scale < 1:
+            image = image.resize((round(image.width * scale), round(image.height * scale)), Image.LANCZOS)
+        if image.size not in groups:
+            groups[image.size] = (first_tag + len(groups), [], [])
+        tag, frames, names = groups[image.size]
+        target = out_dir / f"{tag:02d}_{len(frames) + 1:04d}.jpg"
+        image.save(target, quality=95)
+        frames.append(target)
+        names.append(photo.name)
+    return list(groups.values())
+
+
+def sharpness_of(path: Path) -> float:
+    picture = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+    return float(cv2.Laplacian(picture, cv2.CV_64F).var()) if picture is not None else 0.0
+
+
+def sharpest_moments(video: Path, info: dict, count: int, work: Path) -> list[float] | None:
+    """Times (seconds) of `count` frames: of every stretch of the film the sharpest of its candidate frames.
+
+    Handheld phone films are blurred by the hand more often than not; the keyframe nearest to a moment is
+    a coin toss, the sharpest of four candidates is not. None if the film cannot be read this way."""
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True)
+    try:
+        pattern = str(work / "c_%05d.jpg")
+        command = ["-vf", f"fps={CANDIDATE_RATE},scale={CANDIDATE_SIDE}:-2:flags=area,format=gray", "-q:v", "3", pattern]
+        for hardware in (["-hwaccel", "cuda"], []):   # the graphics card decodes when it can, a little faster
+            for leftover in work.glob("c_*.jpg"):
+                leftover.unlink()
+            result = subprocess.run(["ffmpeg", "-v", "error", "-y", *hardware, "-i", str(video), *command], capture_output=True, text=True)
+            if result.returncode == 0 and any(work.glob("c_*.jpg")):
+                break
+        else:
+            return None
+        files = sorted(work.glob("c_*.jpg"))
+        scores = np.array([sharpness_of(f) for f in files])
+        if len(files) < count:
+            return None
+        edges = np.linspace(0, len(files), count + 1).astype(int)
+        picked = []
+        for low, high in zip(edges[:-1], edges[1:]):
+            best = low + int(np.argmax(scores[low:max(high, low + 1)]))
+            picked.append(best / CANDIDATE_RATE)
+        return picked
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def cut_frames(video: Path, times: list[float], chain: list[str], out_dir: Path, tag: str) -> list[Path]:
+    """The frames at these times, upright, shrunk, tone-mapped when HDR. Cut in parallel."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(item):
+        number, moment = item
+        target = out_dir / f"{tag}_{number + 1:04d}.jpg"
+        command = ["ffmpeg", "-v", "error", "-y", "-ss", f"{moment:.3f}", "-i", str(video), "-frames:v", "1",
+                   "-vf", ",".join(chain), "-q:v", "2", str(target)]
+        ok = subprocess.run(command, capture_output=True, text=True).returncode == 0 and target.is_file()
+        return target if ok else None
+
+    with ThreadPoolExecutor(PICK_THREADS) as pool:
+        made = list(pool.map(one, enumerate(times)))
+    return [frame for frame in made if frame is not None]
+
+
 BLUR_RATIO = 0.45     # a frame sharper-than-this-share-of-its-film's-median is kept
 BLUR_MAX_DROP = 0.25  # never throw away more than this share of a film's frames
 
@@ -141,6 +232,19 @@ def extract_frames(video: Path, out_dir: Path, tag: str, count: int) -> list[Pat
     # Decoding every frame of a 4K film is what takes minutes; the keyframes (about one per second) are cheap to
     # decode, the sharpest frames of the film, and plenty to pick `count` from. Short clips with too few keyframes
     # and clips where this fails are read frame by frame as before.
+    chains = [[shrink, TONEMAP], [shrink]] if info["hdr"] else [[shrink]]
+    try:
+        times = sharpest_moments(video, info, min(count, int(info["duration"] * CANDIDATE_RATE)), out_dir / f"_candidates_{tag}") if info["duration"] > 1 else None
+    except Exception as error:  # the sharpest-frame choice is an improvement; the keyframes below always work
+        print(f"Choosing the sharpest frames did not work ({error}); using keyframes", file=sys.stderr)
+        times = None
+    if times:
+        for chain in chains:
+            frames = cut_frames(video, times, chain, out_dir, tag)
+            if len(frames) >= 0.9 * len(times):
+                return drop_blurry(frames[:count])
+            for leftover in out_dir.glob(f"{tag}_*.jpg"):
+                leftover.unlink()
     fast = keyframe_count(video) >= count
     modes = [["-skip_frame", "nokey"], []] if fast else [[]]
     problem = ""
@@ -510,18 +614,26 @@ def main() -> int:
     if window < args.window:
         progress("frames", 1, f"Only {free_gb:.1f} GB of GPU memory is free, using {window} frames at a time")
 
-    # 1. frames, spread over every video by its length
+    # 1. frames: spread over every film by its length; photos are frames of their own (each size is one source)
     progress("frames", 2, "Preparing frames")
-    seconds = [video_seconds(v) for v in args.videos]
-    counts = sample_counts(seconds, args.fps, args.min_per_video, args.max_frames)
+    films = [v for v in args.videos if not is_photo(v)]
+    photos = [v for v in args.videos if is_photo(v)]
+    seconds = [video_seconds(v) for v in films]
+    counts = sample_counts(seconds, args.fps, args.min_per_video, args.max_frames) if films else []
     frame_paths: list[Path] = []
-    for index, (video, count) in enumerate(zip(args.videos, counts)):
+    sources: list[dict] = []   # what the tags 00, 01, ... stand for
+    for index, (video, count) in enumerate(zip(films, counts)):
         tag = f"{index:02d}"
         existing = sorted((args.out / "frames").glob(f"{tag}_*.jpg")) if args.reuse_frames else []
         frame_paths += existing or extract_frames(video, args.out / "frames", tag, count)
-        progress("frames", 2 + 6 * (index + 1) / len(args.videos), f"Preparing frames ({index + 1}/{len(args.videos)} videos)")
+        sources.append({"name": video.name, "files": [video.name]})
+        progress("frames", 2 + 6 * (index + 1) / max(len(args.videos), 1), f"Preparing frames ({index + 1}/{len(args.videos)})")
+    if photos:
+        for tag, frames, names in read_photos(photos, args.out / "frames", len(films)):
+            frame_paths += frames
+            sources.append({"name": f"Photos ({len(frames)})", "files": names})
     if not frame_paths:
-        print("Could not read any frame from the videos", file=sys.stderr)
+        print("Could not read any frame from the videos or photos", file=sys.stderr)
         return 3
 
     # 2. the model
@@ -535,10 +647,12 @@ def main() -> int:
     model = model.to("cuda").eval()
     upscaler = Upscaler(args.upscale_model) if args.upscale_model else None
 
-    # 3. window by window: cameras + depth, line up with the previous window, fuse into one cloud
+    # 3. window by window. With COLMAP the windows are independent (they only give each frame's depth); without it
+    # they are lined up with the previous one and fused into one cloud
+    independent = bool(args.colmap and not args.no_sfm)
     while True:
         try:
-            outcome = reconstruct(model, upscaler, frame_paths, window, args, dtype)
+            outcome = reconstruct(model, upscaler, frame_paths, window, args, dtype, independent)
             break
         except torch.OutOfMemoryError:
             gc.collect(); torch.cuda.empty_cache()
@@ -551,7 +665,10 @@ def main() -> int:
         print("The first part could not be reconstructed.", file=sys.stderr)
         return 5
     fusion, kept, stats = outcome
-    del model, upscaler
+    if not independent:
+        del model, upscaler
+    else:
+        model.to("cpu")  # the weights only wait (graphics memory goes to COLMAP); they are needed again if COLMAP fails
     gc.collect(); torch.cuda.empty_cache()
 
     # 3b. every camera of the room placed together (COLMAP, GPU). VGGT's depth of one frame is good, but its scale
@@ -569,6 +686,18 @@ def main() -> int:
                 raise
             print(f"COLMAP did not work, the VGGT cameras are used: {error}", file=sys.stderr)
             align = None
+    if independent and not align:
+        # COLMAP did not work: the old way, windows lined up and fused (the weights come back to the card)
+        progress("inference", 12, "Reconstructing the room window by window")
+        model.to("cuda")
+        outcome = reconstruct(model, upscaler, frame_paths, window, args, dtype, False)
+        if outcome is None:
+            print("The first part could not be reconstructed.", file=sys.stderr)
+            return 5
+        fusion, kept, stats = outcome
+    if independent:
+        del model, upscaler
+        gc.collect(); torch.cuda.empty_cache()
     if align:
         for key in ("paths", "boxes", "intrinsic", "depth", "conf", "canvas"):
             kept[key] = [kept[key][i] for i in align["keep"]]
@@ -593,14 +722,15 @@ def main() -> int:
     extrinsic = np.stack(kept["extrinsic"])
     intrinsic = np.stack(kept["intrinsic"])
     np.savez_compressed(args.out / "cameras.npz", extrinsic=extrinsic, intrinsic=intrinsic)
-    per_video = [sum(1 for p in kept["paths"] if p.name.startswith(f"{i:02d}_")) for i in range(len(args.videos))]
+    per_video = [sum(1 for p in kept["paths"] if p.name.startswith(f"{i:02d}_")) for i in range(len(sources))]
     (args.out / "frames.json").write_text(json.dumps({
         "paths": [str(p) for p in kept["paths"]], "per_video": per_video,
         "height": stats["height"], "width": stats["width"], "boxes": [list(b) for b in kept["boxes"]],
         "canvas": [list(c) for c in kept["canvas"]]}))
     centers = centers_of(extrinsic)
     report = {
-        "videos": [v.name for v in args.videos],
+        "videos": [source["name"] for source in sources],
+        "media": [source["files"] for source in sources],
         "frames_per_video": per_video,
         "frames": len(kept["paths"]),
         "frames_sampled": len(frame_paths),
@@ -653,12 +783,15 @@ def main() -> int:
     return 0
 
 
-def reconstruct(model, upscaler, frame_paths, window, args, dtype):
+def reconstruct(model, upscaler, frame_paths, window, args, dtype, independent=False):
     """All parts in order. Returns (fusion, kept cameras, stats), or None if even the first part fails.
 
     Stops early, keeping what is lined up so far, when a part does not fit the one before it.
+
+    `independent`: COLMAP will place the cameras, so every window only has to give the depth of its own frames:
+    no overlap, no lining up (which also means no part can "not fit"), no fusing.
     """
-    spans = plan_parts(len(frame_paths), window, args.overlap)
+    spans = plan_parts(len(frame_paths), window, 0 if independent else args.overlap)
     kept = {"paths": [], "boxes": [], "extrinsic": [], "intrinsic": [], "depth": [], "conf": [], "canvas": []}
     stats = {"parts": len(spans), "parts_used": 0, "stopped": "", "worst_error": 0.0, "candidates": 0, "kept": 0,
              "dense_seconds": 0.0, "median_depth": 0.0, "height": 0, "width": 0}
@@ -669,7 +802,12 @@ def reconstruct(model, upscaler, frame_paths, window, args, dtype):
         progress("inference", 12 + 80 * number / len(spans), f"Reconstructing part {number + 1} of {len(spans)}")
         part = estimate_part(model, frame_paths[first:last], args.long_side, dtype)
         shared = 0
-        if previous is not None:
+        if independent:
+            if fusion is None:
+                stats["median_depth"] = float(part.depth.flatten()[::97].median())
+                stats["height"], stats["width"] = part.height, part.width
+                fusion = True  # only marks that the first window worked
+        elif previous is not None:
             shared = spans[number - 1][1] - first
             error = line_up(part, previous[0][-shared:], previous[1][-shared:], shared)
             if error is None or error > MAX_ALIGN_ERROR:
@@ -683,9 +821,10 @@ def reconstruct(model, upscaler, frame_paths, window, args, dtype):
             focal = float(part.intrinsic[:, 0, 0].mean()) * args.detail
             fusion = VoxelFusion(voxel=args.voxel_px * stats["median_depth"] / focal)
 
-        started = time.time()
-        fuse_part(part, shared, fusion, upscaler, args, stats)
-        stats["dense_seconds"] += time.time() - started
+        if not independent:
+            started = time.time()
+            fuse_part(part, shared, fusion, upscaler, args, stats)
+            stats["dense_seconds"] += time.time() - started
 
         own = slice(shared, None)  # frames shared with the part before were already taken from that one
         extrinsic = part.extrinsic.cpu().numpy()
@@ -698,7 +837,7 @@ def reconstruct(model, upscaler, frame_paths, window, args, dtype):
         kept["canvas"] += [(part.height, part.width)] * len(part.paths[own])  # windows of other shapes have other canvases
         stats["parts_used"] += 1
 
-        next_shared = (spans[number][1] - spans[number + 1][0]) if number + 1 < len(spans) else 0
+        next_shared = (spans[number][1] - spans[number + 1][0]) if number + 1 < len(spans) and not independent else 0
         if next_shared:
             tail_depth = np.array([float(part.depth[i].median()) for i in range(len(part.paths) - next_shared, len(part.paths))])
             previous = (extrinsic[-next_shared:], tail_depth)

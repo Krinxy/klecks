@@ -127,11 +127,11 @@ pub fn MainMenu(flow: ScanFlow) -> impl IntoView {
                     view! {
                         <div class="slab-room">
                             <div class="slab-room-photo">
-                                <RoomPicture room_id=entry.room.id.clone() cover=entry.cover.clone() kind=entry.room.kind.clone() has_videos=!entry.room.videos.is_empty() />
+                                <RoomPicture room_id=entry.room.id.clone() cover=entry.cover.clone() kind=entry.room.kind.clone() has_videos=!entry.room.videos.is_empty() || !entry.room.photos.is_empty() />
                             </div>
                             <div class="slab-room-line">
                                 <span class="slab-room-name">{entry.room.name.clone()}</span>
-                                <span class="slab-room-count">{count_of(entry.room.videos.len(), "video", "videos")}</span>
+                                <span class="slab-room-count">{crate::format::media_count(entry.room.videos.len(), entry.room.photos.len())}</span>
                             </div>
                             <p class="slab-room-note">{note}</p>
                         </div>

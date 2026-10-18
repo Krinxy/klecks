@@ -40,7 +40,9 @@ pub struct VideoShare {
     share_pct: u8,
     /// False for films that were added after the last scan.
     scanned: bool,
-    /// A frame cut from this film, for the little picture in the list.
+    /// "video" or "photo"
+    kind: &'static str,
+    /// A frame cut from this film (or the photo itself), for the little picture in the list.
     thumb: Option<String>,
     /// Position of the film in the scan (its colour on the plan).
     index: Option<usize>,
@@ -200,13 +202,27 @@ pub fn room_overview(state: State<AppState>, room: String) -> Result<RoomOvervie
         .map(|count| count.as_u64().unwrap_or(0) as u32)
         .collect();
     let frames: u32 = counts.iter().sum();
-    let excluded = read_excluded(&found);
-    let mut videos: Vec<VideoShare> = found
-        .videos
+    let files_of_sources: Vec<Vec<String>> = report
+        .as_ref()
+        .and_then(|report| report.get("media")?.as_array().cloned())
+        .unwrap_or_default()
         .iter()
-        .map(|video| {
-            let at = names.iter().position(|name| name == &video.name);
-            let used = at.and_then(|index| counts.get(index)).copied().unwrap_or(0);
+        .map(|files| files.as_array().map(|list| list.iter().filter_map(|name| name.as_str().map(str::to_owned)).collect()).unwrap_or_default())
+        .collect();
+    let excluded = read_excluded(&found);
+    let media: Vec<(&klecks_library::VideoFile, &'static str)> =
+        found.videos.iter().map(|file| (file, "video")).chain(found.photos.iter().map(|file| (file, "photo"))).collect();
+    let mut videos: Vec<VideoShare> = media
+        .iter()
+        .map(|(video, kind)| {
+            let at = names.iter().position(|name| name == &video.name).or_else(|| {
+                // newer scans list the files of every source (a film, or all photos of one size)
+                files_of_sources.iter().position(|files| files.contains(&video.name))
+            });
+            let used = match (*kind, at) {
+                ("photo", Some(_)) => 1,
+                (_, found_at) => found_at.and_then(|index| counts.get(index)).copied().unwrap_or(0),
+            };
             VideoShare {
                 name: video.name.clone(),
                 size_mb: video.size_bytes as f64 / (1024.0 * 1024.0),
@@ -215,10 +231,20 @@ pub fn room_overview(state: State<AppState>, room: String) -> Result<RoomOvervie
                 scanned: at.is_some(),
                 index: at,
                 included: !excluded.contains(&video.name),
-                thumb: at.and_then(|index| {
-                    let frame = PathBuf::from(&scan.as_ref()?.result.scan_dir).join("frames").join(format!("{index:02}_0000.jpg"));
-                    frame.is_file().then(|| frame.to_string_lossy().into_owned())
-                }),
+                kind,
+                thumb: if *kind == "photo" {
+                    Some(video.path.to_string_lossy().into_owned())
+                } else {
+                    at.and_then(|index| {
+                        let frames = PathBuf::from(&scan.as_ref()?.result.scan_dir).join("frames");
+                        // the first frame of the film, whatever number it carries
+                        let mut found = std::fs::read_dir(&frames).ok()?.filter_map(Result::ok).map(|entry| entry.path())
+                            .filter(|path| path.file_name().is_some_and(|name| name.to_string_lossy().starts_with(&format!("{index:02}_"))))
+                            .collect::<Vec<_>>();
+                        found.sort();
+                        found.into_iter().next().map(|frame| frame.to_string_lossy().into_owned())
+                    })
+                },
             }
         })
         .collect();
@@ -238,6 +264,7 @@ pub fn room_overview(state: State<AppState>, room: String) -> Result<RoomOvervie
 }
 
 const COVER_FILE: &str = "cover.jpg";
+const PHOTO_EXTENSIONS: [&str; 4] = ["jpg", "jpeg", "png", "webp"];
 const COVER_WIDTH: u32 = 900;
 /// The kinds of room the "+" offers; anything else is stored as "other".
 const ROOM_KINDS: [&str; 8] = ["livingroom", "bedroom", "office", "kitchen", "hallway", "bathroom", "dining", "other"];
@@ -334,12 +361,13 @@ pub fn create_room(state: State<AppState>, name: String, kind: String) -> Result
 #[tauri::command(async)]
 pub async fn add_videos(state: State<'_, AppState>, room: String, paths: Vec<String>) -> Result<usize, String> {
     let found = library(&state)?.room(&room).ok_or("That room does not exist.")?;
-    let extensions = state
+    let mut extensions = state
         .config()
         .settings
         .as_ref()
         .map(|settings| settings.capture.extensions.clone())
         .unwrap_or_default();
+    extensions.extend(PHOTO_EXTENSIONS.iter().map(|ext| ext.to_string()));
     tauri::async_runtime::spawn_blocking(move || {
         let mut added = 0;
         for source in paths.iter().map(PathBuf::from) {
@@ -565,16 +593,17 @@ pub fn start_room_scan(app: AppHandle, room: String, videos: Option<Vec<String>>
         library(&state)?.room(&room)
     };
     let found = found.ok_or("That room does not exist.")?;
-    if found.videos.is_empty() {
-        return Err(format!("{} has no videos yet. Put them in {}.", found.name, found.dir.display()));
+    if found.videos.is_empty() && found.photos.is_empty() {
+        return Err(format!("{} has no videos or photos yet. Put them in {}.", found.name, found.dir.display()));
     }
     // The ticks of the confirmation come as a list of names and are kept for next time; without a list the
     // saved ticks apply (a retry runs the same scan again).
+    let everything: Vec<&klecks_library::VideoFile> = found.videos.iter().chain(found.photos.iter()).collect();
     let excluded: Vec<String> = match &videos {
-        Some(chosen) => found.videos.iter().filter(|video| !chosen.contains(&video.name)).map(|video| video.name.clone()).collect(),
+        Some(chosen) => everything.iter().filter(|file| !chosen.contains(&file.name)).map(|file| file.name.clone()).collect(),
         None => read_excluded(&found),
     };
-    let chosen: Vec<PathBuf> = found.videos.iter().filter(|video| !excluded.contains(&video.name)).map(|video| video.path.clone()).collect();
+    let chosen: Vec<PathBuf> = everything.iter().filter(|file| !excluded.contains(&file.name)).map(|file| file.path.clone()).collect();
     if chosen.is_empty() {
         return Err("No video is ticked. Tick at least one film for the scan.".into());
     }
