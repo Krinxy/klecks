@@ -510,6 +510,11 @@ def main() -> int:
     (args.out / "frames.json").write_text(json.dumps({
         "paths": [str(p) for p in kept["paths"]], "per_video": per_video,
         "height": stats["height"], "width": stats["width"], "boxes": [list(b) for b in kept["boxes"]]}))
+    try:
+        from room_plan import build as build_plan
+        (args.out / "plan.json").write_text(json.dumps(build_plan(args.out)))
+    except Exception as error:  # the plan is a nicety, never a reason to lose the scan
+        print(f"No floor plan: {error}", file=sys.stderr)
     centers = centers_of(extrinsic)
     report = {
         "videos": [v.name for v in args.videos],

@@ -14,7 +14,8 @@ const HOST_ID: &str = "klecks-viewer";
 
 /// The finished scene: fly through the point cloud of your room.
 #[component]
-pub fn SceneViewer(scan: ScanResult, flow: ScanFlow) -> impl IntoView {
+pub fn SceneViewer(scan: ScanResult, flow: ScanFlow, #[prop(optional)] embedded: bool) -> impl IntoView {
+    let enlarged = scan.clone();
     let loading = RwSignal::new(true);
     let error = RwSignal::new(None::<String>);
     let summary = RwSignal::new(String::new());
@@ -48,13 +49,17 @@ pub fn SceneViewer(scan: ScanResult, flow: ScanFlow) -> impl IntoView {
     on_cleanup(Viewer3d::dispose);
 
     view! {
-        <div class="viewer">
+        <div class="viewer" class:viewer-embedded=embedded>
             <div id=HOST_ID node_ref=host class="viewer-host"></div>
             <div class="hud hud-top">
                 <span class="chip">{move || summary.get()}</span>
                 <span class="spacer"></span>
                 <button class="btn btn-ghost" on:click=move |_| Viewer3d::reset_view()>"Reset view"</button>
-                <button class="btn btn-primary" on:click=move |_| flow.home()>"Menu"</button>
+                {if embedded {
+                    view! { <button class="btn btn-primary" on:click=move |_| flow.show(enlarged.clone())>"Full screen"</button> }.into_any()
+                } else {
+                    view! { <button class="btn btn-primary" on:click=move |_| flow.home()>"Menu"</button> }.into_any()
+                }}
             </div>
             <p class="hud-hint">"Drag to look around, scroll to zoom, W A S D to walk, right-drag to pan."</p>
             <Show when=move || loading.get()>

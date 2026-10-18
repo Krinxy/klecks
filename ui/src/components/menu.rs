@@ -7,23 +7,24 @@ use leptos::prelude::*;
 use wasm_bindgen::JsValue;
 
 use crate::bridge::TauriBridge;
-use crate::components::stage::Stage;
 use crate::flow::ScanFlow;
-use crate::format::count_of;
+use crate::format::{count_of, when};
 use crate::model::{Asset, RoomView, View};
 
 const ITEMS: [&str; 5] = ["Rooms", "Catalog", "New scan", "Settings", "Quit"];
+const QUIT: usize = 4;
 
-/// The start menu, in the manner of a game: big words, arrow keys and Enter.
+/// The start menu, in the manner of a game: skewed slabs, arrow keys and Enter. The newest room
+/// sits on a tilted card on the right.
 #[component]
 pub fn MainMenu(flow: ScanFlow) -> impl IntoView {
     let selected = RwSignal::new(0usize);
-    let rooms = RwSignal::new(None::<usize>);
+    let rooms = RwSignal::new(None::<Vec<RoomView>>);
     let assets = RwSignal::new(None::<usize>);
 
     leptos::task::spawn_local(async move {
         if let Ok(list) = TauriBridge::call::<Vec<RoomView>>("list_rooms", JsValue::UNDEFINED).await {
-            rooms.set(Some(list.len()));
+            rooms.set(Some(list));
         }
         if let Ok(list) = TauriBridge::call::<Vec<Asset>>("list_assets", JsValue::UNDEFINED).await {
             assets.set(Some(list.len()));
@@ -42,8 +43,8 @@ pub fn MainMenu(flow: ScanFlow) -> impl IntoView {
 
     let listener = window_event_listener(leptos::ev::keydown, move |event| {
         match event.key().as_str() {
-            "ArrowDown" => selected.update(|index| *index = (*index + 1) % ITEMS.len()),
-            "ArrowUp" => selected.update(|index| *index = (*index + ITEMS.len() - 1) % ITEMS.len()),
+            "ArrowDown" | "s" => selected.update(|index| *index = (*index + 1) % ITEMS.len()),
+            "ArrowUp" | "w" => selected.update(|index| *index = (*index + ITEMS.len() - 1) % ITEMS.len()),
             "Enter" => choose(selected.get_untracked()),
             _ => return,
         }
@@ -52,40 +53,93 @@ pub fn MainMenu(flow: ScanFlow) -> impl IntoView {
     on_cleanup(move || listener.remove());
 
     let detail = move |index: usize| match index {
-        0 => rooms.get().map(|n| count_of(n, "room", "rooms")).unwrap_or_default(),
+        0 => rooms.get().map(|list| count_of(list.len(), "room", "rooms")).unwrap_or_default(),
         1 => assets.get().map(|n| count_of(n, "item", "items")).unwrap_or_default(),
         2 => "loose videos".to_string(),
-        3 => "quality, folders".to_string(),
         _ => String::new(),
     };
 
+    // The room on the card: the one scanned last, else the first.
+    let featured = move || {
+        rooms.get().and_then(|list| {
+            let newest = list
+                .iter()
+                .filter_map(|entry| entry.latest_scan.as_ref().map(|scan| (scan.modified_ms, entry.room.id.clone())))
+                .max()
+                .map(|(_, id)| id);
+            list.into_iter().find(|entry| Some(&entry.room.id) == newest.as_ref())
+        })
+    };
+
     view! {
-        <Stage mood="">
-            <nav class="menu" aria-label="Main menu">
-                <p class="wordmark">"klecks"</p>
-                <p class="tagline">"Rebuild a room from video."</p>
-                <ul class="menu-list">
+        <section class="slab-stage">
+            <span class="slab-shape slab-shape-dark"></span>
+            <span class="slab-shape slab-shape-khaki"></span>
+            <span class="slab-shape slab-shape-black"></span>
+            <span class="slab-shape slab-shape-paper"></span>
+
+            <div class="slab-brand">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="12" cy="13" r="6.5" /><circle cx="6.5" cy="8" r="2.6" />
+                    <circle cx="18" cy="7" r="2" /><circle cx="17.5" cy="18.5" r="1.6" />
+                </svg>
+                <span>"klecks"</span>
+            </div>
+
+            <nav aria-label="Main menu">
+                <ul class="slab-list">
                     {ITEMS
                         .iter()
                         .enumerate()
                         .map(|(index, label)| view! {
                             <li>
                                 <button
-                                    class="menu-item"
+                                    class="slab"
                                     class:is-selected=move || selected.get() == index
+                                    class:is-quiet=move || index == QUIT
                                     on:mouseenter=move |_| selected.set(index)
                                     on:focus=move |_| selected.set(index)
                                     on:click=move |_| choose(index)
                                 >
-                                    <span class="menu-label">{*label}</span>
-                                    <span class="menu-detail">{move || detail(index)}</span>
+                                    <span>
+                                        <span class="slab-label">{*label}</span>
+                                        <span class="slab-detail">{move || detail(index)}</span>
+                                    </span>
                                 </button>
                             </li>
                         })
                         .collect_view()}
                 </ul>
-                <p class="menu-keys">"Up and down to move, Enter to choose"</p>
             </nav>
-        </Stage>
+
+            {move || {
+                let entry = featured().or_else(|| rooms.get().and_then(|list| list.into_iter().next()));
+                entry.map(|entry| {
+                    let note = match &entry.latest_scan {
+                        Some(scan) => format!(
+                            "{}, scanned {}",
+                            if scan.result.kind == "splats" { "Splat scene" } else { "Point cloud" },
+                            when(scan.modified_ms)
+                        ),
+                        None => "Not scanned yet".to_string(),
+                    };
+                    view! {
+                        <div class="slab-room">
+                            <div class="slab-room-photo">"Room picture"</div>
+                            <div class="slab-room-line">
+                                <span class="slab-room-name">{entry.room.name.clone()}</span>
+                                <span class="slab-room-count">{count_of(entry.room.videos.len(), "video", "videos")}</span>
+                            </div>
+                            <p class="slab-room-note">{note}</p>
+                        </div>
+                    }
+                })
+            }}
+
+            <p class="slab-keys">
+                <span>"W S or arrows"</span>
+                <span>"Enter to choose"</span>
+            </p>
+        </section>
     }
 }

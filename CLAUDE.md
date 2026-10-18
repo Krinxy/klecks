@@ -23,8 +23,10 @@ plan derived from it, and a "what fits here" tool. Offline, Windows + Linux, one
   and Leptos `#[component]` are the only free functions, kept as thin shims.
 - **Every Rust file starts with the owner header** (Owner / Contributors / Last modified).
 - Frameless window with our own min/max/close buttons. Design: gutla's marble black and glass,
-  sage-green palette (`#A5B497` accent, `#7B8560` moss, `#85815B` olive), a field of drifting soft
-  "splats" as the one memorable element. No grid/blueprint look (owner dislikes it), no ALL-CAPS
+  khaki olive-green palette (`#9FB350` accent, `#6F8F3A` moss, `#84894A` olive, paper `#F1EFE2`), pointed
+  corners (3-6 px radius, skewed slabs, chamfered tabs), Archivo Black for display type (bundled in
+  `ui/public/fonts`). The start menu is the "slab" layout (Persona 5 manner); the other screens keep a drifting
+  field of soft "splats". No grid/blueprint look (owner dislikes it), no ALL-CAPS
   eyebrows, no monospace data chips. Single work tree only (see global CLAUDE.md).
 - **Work only in this checkout.** No git worktrees, no side branches.
 
@@ -99,3 +101,6 @@ When running the built exe from a target dir, set `KLECKS_CONFIG_DIR`.
 - VGGT weights are CC-BY-NC-4.0 (non-commercial). Keep that in mind before distributing klecks.
 - Lab env lives at `D:\Projects\klecks-lab` (conda `-p`), run outputs in `D:\Projects\klecks-runs`;
   test videos in `media/` are git-ignored.
+- A room's screen (`room.rs`) shows the plan from `plan.json` (written by `lab/room_plan.py` at the end of a scan; run it by hand
+  for older scans), the free camera (same viewer, embedded) and each film's share of the scene's frames (`room_overview`).
+  Doors are not detected yet.

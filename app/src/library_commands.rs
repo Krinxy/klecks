@@ -26,6 +26,33 @@ pub struct RoomView {
     latest_scan: Option<ScanListItem>,
 }
 
+/// One film of a room and how much of the latest scan came from it.
+#[derive(Serialize)]
+pub struct VideoShare {
+    name: String,
+    size_mb: f64,
+    /// Frames of this film that went into the scene; 0 when the film is newer than the scan.
+    frames: u32,
+    /// Share of all frames of the scene, 0 to 100.
+    share_pct: u8,
+    /// False for films that were added after the last scan.
+    scanned: bool,
+    /// A frame cut from this film, for the little picture in the list.
+    thumb: Option<String>,
+    /// Position of the film in the scan (its colour on the plan).
+    index: Option<usize>,
+}
+
+/// What a room screen shows: which films built the scene, and the top-down plan if the scan has one.
+#[derive(Serialize)]
+pub struct RoomOverview {
+    room: Room,
+    scan: Option<ScanListItem>,
+    videos: Vec<VideoShare>,
+    frames: u32,
+    plan: Option<serde_json::Value>,
+}
+
 #[derive(Serialize)]
 pub struct PresetView {
     id: String,
@@ -82,6 +109,63 @@ pub fn list_rooms(state: State<AppState>) -> Result<Vec<RoomView>, String> {
             }
         })
         .collect())
+}
+
+/// The room with its films and, when it was scanned, the contribution of each film and the plan.
+#[tauri::command]
+pub fn room_overview(state: State<AppState>, room: String) -> Result<RoomOverview, String> {
+    let found = library(&state)?.room(&room).ok_or("That room does not exist.")?;
+    let scan = state
+        .config()
+        .paths
+        .as_ref()
+        .map(all_scans)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|scan| scan.room == found.id);
+    let read = |file: &str| -> Option<serde_json::Value> {
+        let dir = &scan.as_ref()?.result.scan_dir;
+        serde_json::from_str(&std::fs::read_to_string(PathBuf::from(dir).join(file)).ok()?).ok()
+    };
+    let report = read("report.json");
+    let names: Vec<String> = report
+        .as_ref()
+        .and_then(|report| report.get("videos")?.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|name| name.as_str().map(str::to_owned))
+        .collect();
+    let counts: Vec<u32> = report
+        .as_ref()
+        .and_then(|report| report.get("frames_per_video")?.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .map(|count| count.as_u64().unwrap_or(0) as u32)
+        .collect();
+    let frames: u32 = counts.iter().sum();
+    let mut videos: Vec<VideoShare> = found
+        .videos
+        .iter()
+        .map(|video| {
+            let at = names.iter().position(|name| name == &video.name);
+            let used = at.and_then(|index| counts.get(index)).copied().unwrap_or(0);
+            VideoShare {
+                name: video.name.clone(),
+                size_mb: video.size_bytes as f64 / (1024.0 * 1024.0),
+                frames: used,
+                share_pct: (used * 100).checked_div(frames).unwrap_or(0) as u8,
+                scanned: at.is_some(),
+                index: at,
+                thumb: at.and_then(|index| {
+                    let frame = PathBuf::from(&scan.as_ref()?.result.scan_dir).join("frames").join(format!("{index:02}_0000.jpg"));
+                    frame.is_file().then(|| frame.to_string_lossy().into_owned())
+                }),
+            }
+        })
+        .collect();
+    videos.sort_by_key(|video| std::cmp::Reverse(video.frames));
+    let plan = read("plan.json");
+    Ok(RoomOverview { room: found, scan, videos, frames, plan })
 }
 
 /// Furniture found in `media/assets/`.

@@ -46,6 +46,7 @@ pub fn run() {
             commands::cancel_reconstruction,
             commands::open_scan,
             library_commands::list_rooms,
+            library_commands::room_overview,
             library_commands::list_assets,
             library_commands::list_scans,
             library_commands::start_room_scan,

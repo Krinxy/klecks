@@ -6,6 +6,7 @@
 pub mod catalog;
 pub mod dropzone;
 pub mod menu;
+pub mod room;
 pub mod rooms;
 pub mod scan_progress;
 pub mod scene_viewer;

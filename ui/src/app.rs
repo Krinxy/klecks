@@ -9,7 +9,7 @@ use wasm_bindgen::JsValue;
 use crate::bridge::TauriBridge;
 use crate::components::{
     catalog::CatalogScreen, dropzone::DropZone, menu::MainMenu, rooms::RoomsScreen,
-    scan_progress::ScanProgress, scene_viewer::SceneViewer, settings::SettingsScreen, stage::Stage,
+    room::RoomScreen, scan_progress::ScanProgress, scene_viewer::SceneViewer, settings::SettingsScreen, stage::Stage,
     statusbar::StatusBar, titlebar::TitleBar,
 };
 use crate::flow::ScanFlow;
@@ -42,10 +42,13 @@ pub fn App() -> impl IntoView {
 
     // Esc goes back to the menu from the menu screens (never while a scan runs or a scene is open).
     let escape = window_event_listener(leptos::ev::keydown, move |event| {
-        if event.key() == "Escape"
-            && matches!(flow.view.get_untracked(), View::NewScan | View::Rooms | View::Catalog | View::Settings)
-        {
-            flow.home();
+        if event.key() != "Escape" {
+            return;
+        }
+        match flow.view.get_untracked() {
+            View::NewScan | View::Rooms | View::Catalog | View::Settings => flow.home(),
+            View::Room(_) => flow.go(View::Rooms),
+            _ => {}
         }
     });
     on_cleanup(move || escape.remove());
@@ -71,6 +74,7 @@ pub fn App() -> impl IntoView {
                     View::Menu => view! { <MainMenu flow=flow /> }.into_any(),
                     View::NewScan => view! { <DropZone blocker=blocker flow=flow /> }.into_any(),
                     View::Rooms => view! { <RoomsScreen flow=flow blocker=blocker /> }.into_any(),
+                    View::Room(id) => view! { <RoomScreen id=id flow=flow blocker=blocker /> }.into_any(),
                     View::Catalog => view! { <CatalogScreen flow=flow /> }.into_any(),
                     View::Settings => view! { <SettingsScreen flow=flow status=status /> }.into_any(),
                     View::Scanning(name) => view! { <ScanProgress name=name flow=flow /> }.into_any(),

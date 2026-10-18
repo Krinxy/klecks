@@ -10,7 +10,7 @@ use crate::bridge::TauriBridge;
 use crate::components::screen::Screen;
 use crate::flow::ScanFlow;
 use crate::format::{count_of, when};
-use crate::model::{RoomView, ScanListItem};
+use crate::model::{RoomView, ScanListItem, View};
 
 /// "IMG_7694.MP4, IMG_7695.MP4 and 3 more"
 fn video_names(room: &RoomView) -> String {
@@ -117,23 +117,24 @@ fn room_card(entry: RoomView, flow: ScanFlow, blocker: Signal<Option<String>>) -
         None => "Not scanned yet".to_string(),
     };
     let scanned = entry.latest_scan.is_some();
-    let open = entry.latest_scan.as_ref().map(|scan| scan.result.clone());
     let scan_id = id.clone();
+    let open_id = id.clone();
+    let room_id = id.clone();
     let scan_label = label.clone();
     let can_scan = move || has_videos && blocker.get().is_none();
 
     view! {
         <li class="room-card">
             <div class="room-main">
-                <h2 class="room-name">{label}</h2>
+                <h2 class="room-name"><button class="room-open" on:click=move |_| flow.go(View::Room(open_id.clone()))>{label}</button></h2>
                 <p class="room-meta">{meta}</p>
                 <p class="room-videos">{names}</p>
             </div>
             <div class="room-side">
                 <span class="chip" class:chip-ok=scanned>{status}</span>
                 <div class="room-actions">
-                    {open.map(|result| view! {
-                        <button class="btn btn-primary" on:click=move |_| flow.show(result.clone())>"Open"</button>
+                    {scanned.then(|| view! {
+                        <button class="btn btn-primary" on:click=move |_| flow.go(View::Room(room_id.clone()))>"Open"</button>
                     })}
                     <button
                         class=if scanned { "btn btn-ghost" } else { "btn btn-primary" }
