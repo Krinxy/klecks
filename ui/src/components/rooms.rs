@@ -10,7 +10,7 @@ use crate::bridge::TauriBridge;
 use crate::components::screen::Screen;
 use crate::flow::ScanFlow;
 use crate::format::{clock, count_of, when};
-use crate::model::{RoomOverview, RoomView, ScanEntry, ScanListItem, View};
+use crate::model::{Apartment, RoomOverview, RoomView, ScanEntry, ScanListItem, View};
 
 fn reveal(kind: &'static str) {
     leptos::task::spawn_local(async move {
@@ -26,6 +26,7 @@ pub fn RoomsScreen(flow: ScanFlow, #[prop(into)] blocker: Signal<Option<String>>
     let loose = RwSignal::new(Vec::<ScanListItem>::new());
     let selected = RwSignal::new(None::<String>);
     let detail = RwSignal::new(None::<Result<RoomOverview, String>>);
+    let apartment = RwSignal::new(None::<Apartment>);
 
     let refresh = move || {
         leptos::task::spawn_local(async move {
@@ -35,6 +36,7 @@ pub fn RoomsScreen(flow: ScanFlow, #[prop(into)] blocker: Signal<Option<String>>
             }
             rooms.set(Some(list));
             loose.set(TauriBridge::call::<Vec<ScanListItem>>("list_scans", JsValue::UNDEFINED).await.unwrap_or_default());
+            apartment.set(TauriBridge::call::<Apartment>("apartment", JsValue::UNDEFINED).await.ok());
         });
     };
     refresh();
@@ -80,6 +82,7 @@ pub fn RoomsScreen(flow: ScanFlow, #[prop(into)] blocker: Signal<Option<String>>
                             <ul class="rail-list">
                                 {list.into_iter().map(|entry| rail_item(entry, selected)).collect_view()}
                             </ul>
+                            {move || apartment.get().filter(|map| map.rooms.len() > 1).map(|map| apartment_map(map, selected))}
                             <Show when=move || !loose.get().is_empty()>
                                 <h2 class="rail-title">"Other scans"</h2>
                                 <ul class="loose">
@@ -259,5 +262,55 @@ fn history_row(
                 </button>
             </span>
         </li>
+    }
+}
+
+/// The apartment as a small map: a room is a node, a confirmed door that leads to another room is a line.
+/// The rooms are not placed to scale yet; that needs the doors to line the plans up.
+fn apartment_map(map: Apartment, selected: RwSignal<Option<String>>) -> impl IntoView {
+    const CENTER: (f64, f64) = (120.0, 80.0);
+    const RADIUS: f64 = 56.0;
+    let count = map.rooms.len() as f64;
+    let spot = |index: usize| {
+        let angle = -std::f64::consts::FRAC_PI_2 + index as f64 * std::f64::consts::TAU / count;
+        (CENTER.0 + RADIUS * 1.5 * angle.cos(), CENTER.1 + RADIUS * angle.sin())
+    };
+    let position = |id: &str| map.rooms.iter().position(|room| room.id == id).map(spot);
+    let lines = map
+        .links
+        .iter()
+        .filter_map(|(a, b)| Some((position(a)?, position(b)?)))
+        .map(|((x1, y1), (x2, y2))| view! { <line x1=x1 y1=y1 x2=x2 y2=y2 class="map-link" /> })
+        .collect_view();
+    let linked = !map.links.is_empty();
+    let nodes = map
+        .rooms
+        .iter()
+        .enumerate()
+        .map(|(index, room)| {
+            let (x, y) = spot(index);
+            let width = 18.0 + room.name.chars().count() as f64 * 6.6;
+            let id = room.id.clone();
+            let id_click = room.id.clone();
+            view! {
+                <g
+                    class="map-node"
+                    class:is-selected=move || selected.get().as_deref() == Some(id.as_str())
+                    transform=format!("translate({x} {y})")
+                    on:click=move |_| selected.set(Some(id_click.clone()))
+                >
+                    <polygon points=format!("{},-12 {},-12 {},12 {},12", -width / 2.0 + 6.0, width / 2.0, width / 2.0 - 6.0, -width / 2.0) />
+                    <text y="4" text-anchor="middle">{room.name.clone()}</text>
+                </g>
+            }
+        })
+        .collect_view();
+    view! {
+        <h2 class="rail-title">"Apartment"</h2>
+        <svg class="map" viewBox="0 0 240 160" role="img" aria-label="Which rooms the doors connect">
+            {lines}
+            {nodes}
+        </svg>
+        {(!linked).then(|| view! { <p class="map-note">"Confirm a door in a room and say where it leads to connect the rooms."</p> })}
     }
 }

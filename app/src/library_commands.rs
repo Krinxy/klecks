@@ -8,7 +8,7 @@ use std::process::Command;
 
 use klecks_library::{Asset, Library, Room};
 use klecks_reconstruct::{SceneKind, ScanResult};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
 use crate::commands::{all_scans, begin_scan, room_of_scan, ScanListItem};
@@ -58,6 +58,37 @@ pub struct ScanEntry {
     note: String,
 }
 
+/// A door as the person decided about it, kept in `doors.json` inside the room's folder so it travels
+/// with the library. Doors are matched to detected ones by position, so a new scan keeps the answers.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct DoorMark {
+    x: f64,
+    y: f64,
+    /// "confirmed", "rejected" or "manual"
+    state: String,
+    /// The room this door leads to.
+    to: Option<String>,
+}
+
+/// A door on the plan: found by the detector or placed by hand, with what the person decided.
+#[derive(Serialize)]
+pub struct DoorView {
+    x: f64,
+    y: f64,
+    width: f64,
+    score: f64,
+    frames: u64,
+    /// "detected" (not reviewed), "confirmed", "rejected" or "manual"
+    state: String,
+    to: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct RoomRef {
+    id: String,
+    name: String,
+}
+
 /// What a room screen shows: which films built the scene, and the top-down plan if the scan has one.
 #[derive(Serialize)]
 pub struct RoomOverview {
@@ -67,6 +98,8 @@ pub struct RoomOverview {
     frames: u32,
     plan: Option<serde_json::Value>,
     history: Vec<ScanEntry>,
+    doors: Vec<DoorView>,
+    other_rooms: Vec<RoomRef>,
 }
 
 #[derive(Serialize)]
@@ -182,7 +215,106 @@ pub fn room_overview(state: State<AppState>, room: String) -> Result<RoomOvervie
     videos.sort_by_key(|video| std::cmp::Reverse(video.frames));
     let plan = read("plan.json");
     let history = state.config().paths.as_ref().map(|paths| scan_history(&paths.scans, &found.id)).unwrap_or_default();
-    Ok(RoomOverview { room: found, scan, videos, frames, plan, history })
+    let doors = door_views(&found, plan.as_ref());
+    let other_rooms = library(&state)?
+        .rooms()
+        .into_iter()
+        .filter(|other| other.id != found.id)
+        .map(|other| RoomRef { id: other.id, name: other.name })
+        .collect();
+    Ok(RoomOverview { room: found, scan, videos, frames, plan, history, doors, other_rooms })
+}
+
+/// Doors closer than this many plan cells are the same door.
+const SAME_DOOR: f64 = 5.0;
+
+fn read_marks(room: &Room) -> Vec<DoorMark> {
+    std::fs::read_to_string(room.dir.join("doors.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+fn near(a: (f64, f64), b: (f64, f64)) -> bool {
+    (a.0 - b.0).hypot(a.1 - b.1) <= SAME_DOOR
+}
+
+/// Detected doors from the plan, with the person's decisions laid over them, plus the doors placed by hand.
+fn door_views(room: &Room, plan: Option<&serde_json::Value>) -> Vec<DoorView> {
+    let marks = read_marks(room);
+    let mut taken = vec![false; marks.len()];
+    let number = |value: &serde_json::Value, key: &str| value.get(key).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let mut views: Vec<DoorView> = plan
+        .and_then(|plan| plan.get("doors")?.as_array())
+        .into_iter()
+        .flatten()
+        .map(|door| {
+            let spot = (number(door, "x"), number(door, "y"));
+            let mark = marks.iter().position(|mark| near((mark.x, mark.y), spot));
+            if let Some(index) = mark {
+                taken[index] = true;
+            }
+            DoorView {
+                x: spot.0,
+                y: spot.1,
+                width: number(door, "width"),
+                score: number(door, "score"),
+                frames: door.get("frames").and_then(|v| v.as_u64()).unwrap_or(0),
+                state: mark.map(|index| marks[index].state.clone()).unwrap_or_else(|| "detected".into()),
+                to: mark.and_then(|index| marks[index].to.clone()),
+            }
+        })
+        .collect();
+    for (mark, used) in marks.iter().zip(taken) {
+        if !used {
+            views.push(DoorView { x: mark.x, y: mark.y, width: 0.0, score: 1.0, frames: 0, state: mark.state.clone(), to: mark.to.clone() });
+        }
+    }
+    views
+}
+
+/// Saves the person's answer about one door: confirm it, reject it, add one by hand, link it to another room,
+/// or take the answer back (`state` "detected").
+#[tauri::command]
+pub fn set_door(state: State<AppState>, room: String, x: f64, y: f64, status: String, to: Option<String>) -> Result<RoomOverview, String> {
+    let found = library(&state)?.room(&room).ok_or("That room does not exist.")?;
+    if !["confirmed", "rejected", "manual", "detected"].contains(&status.as_str()) {
+        return Err("Unknown door state.".into());
+    }
+    let mut marks = read_marks(&found);
+    marks.retain(|mark| !near((mark.x, mark.y), (x, y)));
+    if status != "detected" {
+        marks.push(DoorMark { x, y, state: status, to: to.filter(|id| !id.is_empty() && id != &found.id) });
+    }
+    let text = serde_json::to_string_pretty(&marks).map_err(|error| error.to_string())?;
+    std::fs::write(found.dir.join("doors.json"), text).map_err(|error| format!("Could not save the door: {error}"))?;
+    room_overview(state, room)
+}
+
+/// Which rooms the doors connect, for the apartment map.
+#[derive(Serialize)]
+pub struct Apartment {
+    rooms: Vec<RoomRef>,
+    links: Vec<(String, String)>,
+}
+
+#[tauri::command]
+pub fn apartment(state: State<AppState>) -> Result<Apartment, String> {
+    let rooms = library(&state)?.rooms();
+    let mut links: Vec<(String, String)> = Vec::new();
+    for room in &rooms {
+        for mark in read_marks(room) {
+            let Some(to) = mark.to else { continue };
+            if mark.state == "rejected" || !rooms.iter().any(|other| other.id == to) {
+                continue;
+            }
+            let pair = if room.id < to { (room.id.clone(), to) } else { (to, room.id.clone()) };
+            if !links.contains(&pair) {
+                links.push(pair);
+            }
+        }
+    }
+    Ok(Apartment { rooms: rooms.into_iter().map(|room| RoomRef { id: room.id, name: room.name }).collect(), links })
 }
 
 /// Every folder in the scans directory that belongs to a room, newest first.

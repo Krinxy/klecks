@@ -45,6 +45,7 @@ VGGT_GB_PER_FRAME = 0.056
 VRAM_RESERVE_GB = 3.0  # headroom for the desktop, the app's own web view and allocator slack
 VRAM_CAP_MARGIN_GB = 2.0  # memory left to everything else on the card (CUDA context, web views, desktop)
 MIN_FRAMES = 8
+DEPTH_STRIDE = 2   # depth maps are kept at half size for the door finder
 
 
 def progress(stage: str, pct: int, message: str) -> None:
@@ -506,6 +507,7 @@ def main() -> int:
     extrinsic = np.stack(kept["extrinsic"])
     intrinsic = np.stack(kept["intrinsic"])
     np.savez_compressed(args.out / "cameras.npz", extrinsic=extrinsic, intrinsic=intrinsic)
+    np.savez_compressed(args.out / "depth.npz", depth=np.stack(kept["depth"]))
     per_video = [sum(1 for p in kept["paths"] if p.name.startswith(f"{i:02d}_")) for i in range(len(args.videos))]
     (args.out / "frames.json").write_text(json.dumps({
         "paths": [str(p) for p in kept["paths"]], "per_video": per_video,
@@ -513,6 +515,10 @@ def main() -> int:
     try:
         from room_plan import build as build_plan
         (args.out / "plan.json").write_text(json.dumps(build_plan(args.out)))
+        from detect_doors import find_doors
+        plan = json.loads((args.out / "plan.json").read_text())
+        plan["doors"] = find_doors(args.out)
+        (args.out / "plan.json").write_text(json.dumps(plan))
     except Exception as error:  # the plan is a nicety, never a reason to lose the scan
         print(f"No floor plan: {error}", file=sys.stderr)
     centers = centers_of(extrinsic)
@@ -557,7 +563,7 @@ def reconstruct(model, upscaler, frame_paths, window, args, dtype):
     Stops early, keeping what is lined up so far, when a part does not fit the one before it.
     """
     spans = plan_parts(len(frame_paths), window, args.overlap)
-    kept = {"paths": [], "boxes": [], "extrinsic": [], "intrinsic": []}
+    kept = {"paths": [], "boxes": [], "extrinsic": [], "intrinsic": [], "depth": []}
     stats = {"parts": len(spans), "parts_used": 0, "stopped": "", "worst_error": 0.0, "candidates": 0, "kept": 0,
              "dense_seconds": 0.0, "median_depth": 0.0, "height": 0, "width": 0}
     fusion: VoxelFusion | None = None
@@ -591,6 +597,7 @@ def reconstruct(model, upscaler, frame_paths, window, args, dtype):
         kept["boxes"] += part.boxes[own]
         kept["extrinsic"] += list(extrinsic[own])
         kept["intrinsic"] += list(part.intrinsic.cpu().numpy()[own])
+        kept["depth"] += list(part.depth[own].half().cpu().numpy()[:, ::DEPTH_STRIDE, ::DEPTH_STRIDE])  # for the doors
         stats["parts_used"] += 1
 
         next_shared = (spans[number][1] - spans[number + 1][0]) if number + 1 < len(spans) else 0

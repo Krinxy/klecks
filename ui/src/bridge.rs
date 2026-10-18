@@ -59,6 +59,15 @@ impl TauriBridge {
         object.into()
     }
 
+    /// Builds `{ key: value, ... }` for a command that takes numbers and text.
+    pub fn object(fields: &[(&str, JsValue)]) -> JsValue {
+        let object = js_sys::Object::new();
+        for (key, value) in fields {
+            let _ = js_sys::Reflect::set(&object, &(*key).into(), value);
+        }
+        object.into()
+    }
+
     /// The address under which the webview may load a file from disk (the asset protocol).
     pub fn file_url(path: &str) -> String {
         convert_file_src(path)

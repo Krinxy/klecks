@@ -10,7 +10,9 @@ use crate::components::scene_viewer::SceneViewer;
 use crate::components::stage::Stage;
 use crate::flow::ScanFlow;
 use crate::format::{count_of, when};
-use crate::model::{Plan, RoomOverview, Thin, VideoScore, VideoShare, View};
+use crate::model::{DoorView, Plan, RoomOverview, RoomRef, Thin, VideoScore, VideoShare, View};
+use wasm_bindgen::JsCast;
+use wasm_bindgen::JsValue;
 
 /// How many of the six density steps a cell shows (0 = empty).
 const LEVELS: u32 = 5;
@@ -73,6 +75,7 @@ fn room_body(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String>>
     let newer = data.videos.iter().filter(|video| !video.scanned).count();
     let scan_result = data.scan.as_ref().map(|scan| scan.result.clone());
     let plan = data.plan.clone();
+    let plan_missing = plan.is_none();
     let mut videos = data.videos.clone();
     let footprint = data.plan.as_ref().map(|plan| plan.footprint).unwrap_or(0);
     let scores: Vec<VideoScore> = data.plan.as_ref().map(|plan| plan.videos.clone()).unwrap_or_default();
@@ -85,6 +88,11 @@ fn room_body(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String>>
     let can_scan = move || has_videos && blocker.get().is_none();
     let scan_room = room_id.clone();
     let scan_label = room_name.clone();
+    let doors = RwSignal::new(data.doors.clone());
+    let adding = RwSignal::new(false);
+    let other_rooms = data.other_rooms.clone();
+    let plan_room = room_id.clone();
+    let list_room = room_id.clone();
 
     view! {
         <div class="room">
@@ -116,11 +124,15 @@ fn room_body(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String>>
                         <button class="tab" class:is-selected=move || pane.get() == Pane::Plan role="tab" on:click=move |_| pane.set(Pane::Plan)>"Floor plan"</button>
                         <button class="tab" class:is-selected=move || pane.get() == Pane::Camera role="tab"
                             disabled=scan_result.is_none() on:click=move |_| pane.set(Pane::Camera)>"Free camera"</button>
+                        <button class="tab tab-add" class:is-selected=move || adding.get() class:is-hidden=move || pane.get() != Pane::Plan || plan_missing
+                            title="Click the plan to place a door yourself" on:click=move |_| adding.update(|on| *on = !*on)>
+                            {move || if adding.get() { "Click the plan..." } else { "Add door" }}
+                        </button>
                     </div>
                     <div class="panel-stage">
                         {move || match (pane.get(), scan_result.clone()) {
                             (Pane::Camera, Some(scan)) => view! { <SceneViewer scan=scan flow=flow embedded=true /> }.into_any(),
-                            _ => plan_view(plan.clone(), scanned).into_any(),
+                            _ => plan_view(plan.clone(), scanned, doors, adding, plan_room.clone()).into_any(),
                         }}
                     </div>
                 </section>
@@ -134,6 +146,7 @@ fn room_body(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String>>
                             media_row(video, rank, score, footprint)
                         }).collect_view()}
                     </ul>
+                    {door_list(doors, other_rooms, list_room)}
                     {next_best.map(|text| view! {
                         <div class="hint-box">
                             <h3 class="hint-title">"Next best film"</h3>
@@ -203,7 +216,7 @@ fn media_row(video: VideoShare, rank: usize, score: Option<VideoScore>, footprin
 }
 
 /// The footprint of the room seen from above, with the way the camera walked over it.
-fn plan_view(plan: Option<Plan>, scanned: bool) -> impl IntoView {
+fn plan_view(plan: Option<Plan>, scanned: bool, doors: RwSignal<Vec<DoorView>>, adding: RwSignal<bool>, room: String) -> impl IntoView {
     let Some(plan) = plan else {
         let text = if scanned {
             "This scan has no plan yet. Scan the room again and it will be drawn."
@@ -244,7 +257,21 @@ fn plan_view(plan: Option<Plan>, scanned: bool) -> impl IntoView {
 
     view! {
         <div class="plan">
-            <svg viewBox=format!("-2 -2 {} {}", width + 4.0, height + 4.0) role="img" aria-label="Floor plan seen from above">
+            <svg
+                class:is-adding=move || adding.get()
+                viewBox=format!("-2 -2 {} {}", width + 4.0, height + 4.0)
+                role="img"
+                aria-label="Floor plan seen from above"
+                on:click=move |event| {
+                    if !adding.get_untracked() {
+                        return;
+                    }
+                    if let Some((x, y)) = plan_point(&event, width + 4.0, height + 4.0) {
+                        adding.set(false);
+                        save_door(room.clone(), x, y, "manual", None, doors);
+                    }
+                }
+            >
                 <defs>
                     <pattern id="thin-hatch" width="1.6" height="1.6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
                         <line x1="0" y1="0" x2="0" y2="1.6" class="hatch-line" />
@@ -254,10 +281,11 @@ fn plan_view(plan: Option<Plan>, scanned: bool) -> impl IntoView {
                 {cells}
                 {hatch}
                 {paths}
+                {move || door_markers(doors.get())}
             </svg>
             <p class="plan-note">
                 {format!("{covered}% is seen by enough frames. Hatched parts are seen by few. ")}
-                "Lines are the way you walked, one colour per film. Doors are not detected yet."
+                "Lines are the way you walked, one colour per film. Numbered circles are doors: dashed ones are guesses, confirm them on the right."
             </p>
         </div>
     }
@@ -313,4 +341,125 @@ fn plan_cells(plan: &Plan) -> impl IntoView {
         .into_iter()
         .map(|(x, y, run, level)| view! { <rect x=x y=y width=run height="1.02" class=format!("cell cell-{level}") /> })
         .collect_view()
+}
+
+/// Where a click landed on the plan, in plan cells. The SVG keeps its aspect ratio, so the picture is
+/// centred inside the element and the offsets have to be taken off first.
+fn plan_point(event: &leptos::ev::MouseEvent, view_width: f64, view_height: f64) -> Option<(f64, f64)> {
+    let element = event.current_target()?;
+    let measure = js_sys::Reflect::get(&element, &"getBoundingClientRect".into()).ok()?.dyn_into::<js_sys::Function>().ok()?;
+    let rect = measure.call0(&element).ok()?;
+    let side = |name: &str| js_sys::Reflect::get(&rect, &name.into()).ok().and_then(|value| value.as_f64());
+    let (left_edge, top_edge, width, height) = (side("left")?, side("top")?, side("width")?, side("height")?);
+    let scale = (width / view_width).min(height / view_height);
+    if scale <= 0.0 {
+        return None;
+    }
+    let left = (width - view_width * scale) / 2.0;
+    let top = (height - view_height * scale) / 2.0;
+    let x = (event.client_x() as f64 - left_edge - left) / scale - 2.0;
+    let y = (event.client_y() as f64 - top_edge - top) / scale - 2.0;
+    Some((x, y))
+}
+
+/// Saves what the person decided about a door and shows the answer.
+fn save_door(room: String, x: f64, y: f64, status: &'static str, to: Option<String>, doors: RwSignal<Vec<DoorView>>) {
+    leptos::task::spawn_local(async move {
+        let args = TauriBridge::object(&[
+            ("room", JsValue::from_str(&room)),
+            ("x", JsValue::from_f64(x)),
+            ("y", JsValue::from_f64(y)),
+            ("status", JsValue::from_str(status)),
+            ("to", to.map(|id| JsValue::from_str(&id)).unwrap_or(JsValue::NULL)),
+        ]);
+        match TauriBridge::call::<RoomOverview>("set_door", args).await {
+            Ok(updated) => doors.set(updated.doors),
+            Err(message) => leptos::logging::error!("set_door failed: {message}"),
+        }
+    });
+}
+
+/// Rejected doors stay out of sight; the rest are numbered in the order of the list.
+fn visible_doors(doors: Vec<DoorView>) -> Vec<DoorView> {
+    doors.into_iter().filter(|door| door.state != "rejected").collect()
+}
+
+fn door_markers(doors: Vec<DoorView>) -> impl IntoView {
+    visible_doors(doors)
+        .into_iter()
+        .enumerate()
+        .map(|(index, door)| {
+            let (x, y) = (door.x, door.y);
+            view! {
+                <g class=format!("door door-{}", door.state) transform=format!("translate({x} {y})")>
+                    <circle r="2.6" />
+                    <text y="0.9" text-anchor="middle">{index + 1}</text>
+                </g>
+            }
+        })
+        .collect_view()
+}
+
+/// The doors as a list: confirm or reject what the detector found, say where a door leads.
+fn door_list(doors: RwSignal<Vec<DoorView>>, other_rooms: Vec<RoomRef>, room: String) -> impl IntoView {
+    view! {
+        <h3 class="panel-title doors-title">"Doors"</h3>
+        {move || {
+            let shown = visible_doors(doors.get());
+            if shown.is_empty() {
+                return view! { <p class="media-note">"No doors found yet. Add one on the floor plan."</p> }.into_any();
+            }
+            let rows = shown
+                .into_iter()
+                .enumerate()
+                .map(|(index, door)| door_row(index + 1, door, other_rooms.clone(), room.clone(), doors))
+                .collect_view();
+            view! { <ul class="door-list">{rows}</ul> }.into_any()
+        }}
+    }
+}
+
+fn door_row(number: usize, door: DoorView, other_rooms: Vec<RoomRef>, room: String, doors: RwSignal<Vec<DoorView>>) -> impl IntoView {
+    let (x, y) = (door.x, door.y);
+    let reviewed = door.state != "detected";
+    let note = match door.state.as_str() {
+        "detected" => format!("Seen in {}. Is it a door?", count_of(door.frames as usize, "frame", "frames")),
+        "manual" => "Placed by you".to_string(),
+        _ => "Confirmed".to_string(),
+    };
+    let current = door.to.clone().unwrap_or_default();
+    let keep = door.state.clone();
+    let (confirm_room, reject_room, change_room) = (room.clone(), room.clone(), room);
+    view! {
+        <li class="door-row">
+            <span class="door-number">{number}</span>
+            <span class="door-main">
+                <span class="door-note">{note}</span>
+                {reviewed.then(|| view! {
+                    <select
+                        class="input select"
+                        aria-label="Where this door leads"
+                        on:change=move |event| {
+                            let target = event_target_value(&event);
+                            let status = if keep == "manual" { "manual" } else { "confirmed" };
+                            save_door(change_room.clone(), x, y, status, Some(target), doors);
+                        }
+                    >
+                        <option value="" selected=current.is_empty()>"Leads nowhere yet"</option>
+                        {other_rooms.iter().map(|other| view! {
+                            <option value=other.id.clone() selected=current == other.id>{format!("Leads to {}", other.name)}</option>
+                        }).collect_view()}
+                    </select>
+                })}
+            </span>
+            <span class="door-actions">
+                {(!reviewed).then(|| view! {
+                    <button class="btn btn-primary" on:click=move |_| save_door(confirm_room.clone(), x, y, "confirmed", None, doors)>"Yes"</button>
+                })}
+                <button class="btn btn-ghost" on:click=move |_| save_door(reject_room.clone(), x, y, "rejected", None, doors)>
+                    {if reviewed { "Remove" } else { "No" }}
+                </button>
+            </span>
+        </li>
+    }
 }

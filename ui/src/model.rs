@@ -130,6 +130,33 @@ pub struct ScanEntry {
     pub note: String,
 }
 
+/// A door on the plan, found by the detector or placed by hand.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct DoorView {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub score: f64,
+    pub frames: u64,
+    /// "detected" (not reviewed), "confirmed", "rejected" or "manual"
+    pub state: String,
+    /// The room this door leads to.
+    pub to: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct RoomRef {
+    pub id: String,
+    pub name: String,
+}
+
+/// Which rooms the doors connect.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct Apartment {
+    pub rooms: Vec<RoomRef>,
+    pub links: Vec<(String, String)>,
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct RoomOverview {
     pub room: Room,
@@ -138,6 +165,8 @@ pub struct RoomOverview {
     pub frames: u32,
     pub plan: Option<Plan>,
     pub history: Vec<ScanEntry>,
+    pub doors: Vec<DoorView>,
+    pub other_rooms: Vec<RoomRef>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]

@@ -103,4 +103,6 @@ When running the built exe from a target dir, set `KLECKS_CONFIG_DIR`.
   test videos in `media/` are git-ignored.
 - A room's screen (`room.rs`) shows the plan from `plan.json` (written by `lab/room_plan.py` at the end of a scan; run it by hand
   for older scans), the free camera (same viewer, embedded) and each film's share of the scene's frames (`room_overview`).
-  Doors are not detected yet.
+  Doors come from `lab/detect_doors.py` (OWLv2 on the GPU, boxes + VGGT depth -> plan cells, merged); the person confirms,
+  rejects or adds them in the room screen and says where they lead. Answers are kept in `media/rooms/<room>/doors.json`
+  (matched by plan position, so a rescan keeps them). `depth.npz` is written by every scan for this.

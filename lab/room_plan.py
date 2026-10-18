@@ -94,7 +94,8 @@ def build(scan: Path) -> dict:
     ]
     intrinsic = np.load(scan / "cameras.npz")["intrinsic"]
     score = coverage(np.array([[c[0], c[1]] for c in cameras]), heading, flat, intrinsic, video_of, density, scale, size)
-    return {"width": width, "height": height, "cells": density.tolist(), "cameras": cameras, **score}
+    transform = {"basis": basis.tolist(), "low": low.tolist(), "scale": float(scale)}
+    return {"width": width, "height": height, "cells": density.tolist(), "cameras": cameras, "transform": transform, **score}
 
 
 def coverage(spots: np.ndarray, heading: np.ndarray, flat: np.ndarray, intrinsic: np.ndarray,

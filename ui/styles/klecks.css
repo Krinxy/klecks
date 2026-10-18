@@ -535,3 +535,29 @@ code {
 .hint-title { margin-bottom: 4px; font-size: 14px; font-weight: 800; color: #f0b7a9; }
 .tag-cloud.static { margin-top: 14px; }
 .sides.other { margin-bottom: 4px; }
+
+.tab-add { margin-left: auto; }
+.tab.is-hidden { display: none; }
+.plan svg.is-adding { cursor: crosshair; }
+.door circle { fill: rgba(10, 13, 6, 0.85); stroke: var(--sage); stroke-width: 0.5; stroke-dasharray: 1.1 0.9; }
+.door text { fill: var(--paper); font-size: 2.6px; font-weight: 800; }
+.door-confirmed circle, .door-manual circle { fill: var(--sage); stroke: #0a0d06; stroke-dasharray: none; }
+.door-confirmed text, .door-manual text { fill: var(--sage-ink); }
+.doors-title { margin-top: 26px; }
+.door-list { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 10px; }
+.door-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 12px; background: rgba(255, 255, 255, 0.045); }
+.door-number { display: grid; place-items: center; width: 30px; height: 30px; background: var(--sage); color: var(--sage-ink); font-family: var(--display); clip-path: polygon(0 0, 100% 0, calc(100% - 6px) 100%, 0 100%); }
+.door-main { display: grid; gap: 6px; min-width: 0; }
+.door-note { font-size: 13.5px; color: var(--text-dim); }
+.door-actions { display: flex; gap: 6px; }
+.door-actions .btn { padding: 7px 16px; font-size: 13px; }
+.select { flex: none; width: 100%; padding: 6px 8px; }
+
+.map { width: 100%; height: auto; }
+.map-link { stroke: var(--sage); stroke-width: 2; }
+.map-node { cursor: pointer; }
+.map-node polygon { fill: #14170b; stroke: #6d6c58; stroke-width: 1.4; }
+.map-node text { fill: var(--paper); font-size: 11px; font-weight: 700; }
+.map-node.is-selected polygon { fill: var(--sage); stroke: var(--sage); }
+.map-node.is-selected text { fill: var(--sage-ink); }
+.map-note { font-size: 12.5px; color: var(--text-faint); line-height: 1.5; }
