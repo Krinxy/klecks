@@ -588,3 +588,6 @@ code {
 .plan svg { touch-action: none; }
 
 .chosen { margin-top: 20px; }
+
+.overlay-box { display: grid; gap: 14px; justify-items: center; max-width: 52ch; }
+.overlay-hint { color: var(--text-faint); font-size: 13px; }

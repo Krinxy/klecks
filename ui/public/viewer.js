@@ -63,13 +63,24 @@ class KlecksViewer {
    */
   async load(url, sceneScale) {
     if (!this.renderer) throw new Error("viewer is not mounted");
+    const id = (this.loadId = (this.loadId || 0) + 1);
     const timings = (this.timings = { startedAt: performance.now() });
+    this.#startTicker();
+    try {
+      return await this.#loadScene(id, url, sceneScale, timings);
+    } finally {
+      if (id === this.loadId) this.#stopTicker();
+    }
+  }
+
+  async #loadScene(id, url, sceneScale, timings) {
     const bytes = await this.#download(url);
+    if (id !== this.loadId) throw new Error("cancelled");
     timings.downloadMs = Math.round(performance.now() - timings.startedAt);
     timings.megabytes = Math.round(bytes.byteLength / 1048576);
     this.#clear();
     const header = new TextDecoder("ascii").decode(bytes.subarray(0, Math.min(bytes.byteLength, 2048)));
-    const result = header.includes("f_dc_0") ? await this.#showSplats(bytes, sceneScale) : this.#showPoints(bytes.buffer);
+    const result = header.includes("f_dc_0") ? await this.#showSplats(bytes, sceneScale, id) : this.#showPoints(bytes.buffer);
     this.#applyLayout();
     timings.totalMs = Math.round(performance.now() - timings.startedAt);
     console.log("[klecks viewer] load", JSON.stringify(timings));
@@ -80,6 +91,8 @@ class KlecksViewer {
   async #download(url) {
     const stalled = new Error("The scene stopped loading: no data came in for 20 seconds. Close the app, open it again and try once more.");
     const controller = new AbortController();
+    const controllerId = this.loadId;
+    this.abort = controller;
     let timer = 0;
     const watch = () => {
       clearTimeout(timer);
@@ -89,7 +102,7 @@ class KlecksViewer {
       watch();
       return await this.#readAll(url, controller.signal, watch);
     } catch (error) {
-      if (error?.name === "AbortError") throw stalled;
+      if (error?.name === "AbortError") throw this.loadId === controllerId ? stalled : new Error("cancelled");
       throw error;
     } finally {
       clearTimeout(timer);
@@ -127,8 +140,26 @@ class KlecksViewer {
 
   /** Text shown over the viewer while it works (the element is the loading overlay of the UI). */
   #status(text) {
+    this.phase = text;
+    this.#showStatus();
+  }
+
+  #showStatus() {
     const element = document.getElementById("klecks-viewer-status");
-    if (element) element.textContent = text;
+    if (!element) return;
+    const seconds = Math.round((performance.now() - (this.timings?.startedAt ?? performance.now())) / 1000);
+    element.textContent = seconds >= 3 ? `${this.phase || "Loading the scene…"} (${seconds} s)` : this.phase || "Loading the scene…";
+  }
+
+  #startTicker() {
+    this.#stopTicker();
+    this.phase = "Loading the scene…";
+    this.ticker = setInterval(() => this.#showStatus(), 500);
+  }
+
+  #stopTicker() {
+    clearInterval(this.ticker);
+    this.ticker = 0;
   }
 
   #clear() {
@@ -146,7 +177,7 @@ class KlecksViewer {
     }
   }
 
-  async #showSplats(bytes, sceneScale) {
+  async #showSplats(bytes, sceneScale, id) {
     this.#status("Preparing the splats…");
     const prepared = performance.now();
     const splats = new SplatMesh({ fileBytes: bytes, fileName: "scene.ply" });
@@ -154,6 +185,10 @@ class KlecksViewer {
       splats.initialized,
       new Promise((_, reject) => setTimeout(() => reject(new Error("The splats could not be prepared in two minutes. The graphics card may be busy: close other programs that use it and try again.")), PREPARE_MS)),
     ]);
+    if (id !== this.loadId) {
+      splats.dispose?.();
+      throw new Error("cancelled");
+    }
     this.timings.prepareMs = Math.round(performance.now() - prepared);
     splats.rotation.x = Math.PI; // the model's y axis points down; flip so up is up
     this.scene.add(splats);
@@ -282,6 +317,9 @@ class KlecksViewer {
   }
 
   dispose() {
+    this.loadId = (this.loadId || 0) + 1; // a load still running is no longer wanted
+    this.abort?.abort();
+    this.#stopTicker();
     if (this.frame) cancelAnimationFrame(this.frame);
     this.frame = 0;
     for (const [target, name, handler, options] of this.listeners) target.removeEventListener(name, handler, options);
