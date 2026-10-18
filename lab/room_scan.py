@@ -92,6 +92,38 @@ def video_seconds(video: Path) -> float:
     return probe_video(video)["duration"]
 
 
+BLUR_RATIO = 0.45     # a frame sharper-than-this-share-of-its-film's-median is kept
+BLUR_MAX_DROP = 0.25  # never throw away more than this share of a film's frames
+
+
+def sharpness(path: Path) -> float:
+    """Variance of the Laplacian of a reduced grey frame: high = crisp, low = smeared by movement."""
+    picture = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+    if picture is None:
+        return 0.0
+    height, width = picture.shape
+    scale = 960 / max(height, width)
+    if scale < 1:
+        picture = cv2.resize(picture, (round(width * scale), round(height * scale)), interpolation=cv2.INTER_AREA)
+    return float(cv2.Laplacian(picture, cv2.CV_64F).var())
+
+
+def drop_blurry(frames: list[Path]) -> list[Path]:
+    """Frames of one film without the ones blurred by a quick movement of the hand (their files are removed).
+
+    Judged against the film itself: a film of a plain wall is not 'blurry' next to a busy one."""
+    if len(frames) < 8:
+        return frames
+    scores = np.array([sharpness(frame) for frame in frames])
+    floor = BLUR_RATIO * float(np.median(scores))
+    worst_first = np.argsort(scores)
+    allowed = int(len(frames) * BLUR_MAX_DROP)
+    drop = {int(i) for i in worst_first[:allowed] if scores[i] < floor}
+    for index in drop:
+        frames[index].unlink(missing_ok=True)
+    return [frame for i, frame in enumerate(frames) if i not in drop]
+
+
 def extract_frames(video: Path, out_dir: Path, tag: str, count: int) -> list[Path]:
     """Evenly spaced, upright, full-resolution frames from one clip, cut by ffmpeg.
 
@@ -131,7 +163,7 @@ def extract_frames(video: Path, out_dir: Path, tag: str, count: int) -> list[Pat
     if not frames:
         # a film that silently drops out would give a room that is missing a part: fail loudly instead
         raise SystemExit(f"Could not read frames from {video.name}: {problem or 'no frames came out'}")
-    return frames[:count]
+    return drop_blurry(frames[:count])
 
 
 MIXED_LONG_SIDE = 518  # canvas side when portrait and landscape films are combined (same token count)
@@ -453,6 +485,8 @@ def main() -> int:
     parser.add_argument("--reuse-frames", action="store_true", help="keep frames already cut in <out>/frames")
     parser.add_argument("--max-points", type=int, default=6_000_000)
     parser.add_argument("--view-points", type=int, default=3_000_000)
+    parser.add_argument("--no-sfm", action="store_true",
+                        help="keep the VGGT cameras for training instead of placing every camera with COLMAP")
     parser.add_argument("--colmap", action="store_true",
                         help="also write <out>/colmap, the dataset a splat trainer (Brush) reads")
     parser.add_argument("--train-upscale-model", type=Path, default=None,
@@ -520,9 +554,36 @@ def main() -> int:
     del model, upscaler
     gc.collect(); torch.cuda.empty_cache()
 
+    # 3b. every camera of the room placed together (COLMAP, GPU). VGGT's depth of one frame is good, but its scale
+    # differs from window to window, which smears the room. The cameras come from COLMAP and each frame's depth is
+    # scaled to fit the points COLMAP saw; cloud, plan and doors are built from that.
+    align = None
+    if args.colmap and not args.no_sfm:
+        progress("cloud", 93, "Placing every camera exactly (a few minutes)")
+        try:
+            from sfm_align import place_cameras
+
+            align = place_cameras(args.out, kept, DEPTH_STRIDE, progress)
+        except BaseException as error:  # COLMAP is an improvement, never a reason to lose the scan
+            if isinstance(error, KeyboardInterrupt):
+                raise
+            print(f"COLMAP did not work, the VGGT cameras are used: {error}", file=sys.stderr)
+            align = None
+    if align:
+        for key in ("paths", "boxes", "intrinsic", "depth", "conf", "canvas"):
+            kept[key] = [kept[key][i] for i in align["keep"]]
+        kept["extrinsic"] = list(align["extrinsic"])
+        kept["depth"] = [depth.astype(np.float32) * float(scale) for depth, scale in zip(kept["depth"], align["scale"])]
+
     # 4. write
     progress("cloud", 96, "Building the 3D scene")
-    points, colors, counts_per_voxel = fusion.result()
+    if align:
+        from sfm_align import cloud_from_depths
+
+        points, colors, stats["median_depth"] = cloud_from_depths(kept, DEPTH_STRIDE, args.conf_percentile)
+        counts_per_voxel = np.ones(1)
+    else:
+        points, colors, counts_per_voxel = fusion.result()
     del fusion
     full_points, full_colors = voxel_limit(points, colors, args.max_points)
     write_ply(args.out / "points.ply", full_points, full_colors)
@@ -558,13 +619,14 @@ def main() -> int:
         "peak_vram_gb": round(torch.cuda.max_memory_allocated() / 1e9, 1),
         "camera_center_spread": float(np.linalg.norm(centers - centers.mean(0), axis=1).max()),
         "median_depth": stats["median_depth"],
+        "sfm": align["stats"] if align else None,
     }
     (args.out / "report.json").write_text(json.dumps(report, indent=2))
 
     # Extras that are nice to have and never a reason to lose the scan: depth for the door finder, the floor plan, the doors.
     try:
         # one array per frame: windows with portrait and landscape films have canvases of different shapes
-        np.savez_compressed(args.out / "depth.npz", **{f"d{i}": depth for i, depth in enumerate(kept["depth"])})
+        np.savez_compressed(args.out / "depth.npz", **{f"d{i}": depth.astype(np.float16) for i, depth in enumerate(kept["depth"])})
         from room_plan import build as build_plan
         (args.out / "plan.json").write_text(json.dumps(build_plan(args.out)))
         from detect_doors import find_doors
@@ -575,7 +637,12 @@ def main() -> int:
         print(f"No floor plan or doors: {error}", file=sys.stderr)
     if stats["stopped"]:
         progress("inference", 90, stats["stopped"])
-    if args.colmap:
+    if args.colmap and align:
+        from sfm_align import install_training_set
+
+        progress("cloud", 98, "Preparing the training images")
+        install_training_set(args.out, full_points, full_colors)
+    elif args.colmap:
         from export_colmap import export_dataset  # imported late: it imports this module back
 
         export_dataset(
@@ -592,7 +659,7 @@ def reconstruct(model, upscaler, frame_paths, window, args, dtype):
     Stops early, keeping what is lined up so far, when a part does not fit the one before it.
     """
     spans = plan_parts(len(frame_paths), window, args.overlap)
-    kept = {"paths": [], "boxes": [], "extrinsic": [], "intrinsic": [], "depth": [], "canvas": []}
+    kept = {"paths": [], "boxes": [], "extrinsic": [], "intrinsic": [], "depth": [], "conf": [], "canvas": []}
     stats = {"parts": len(spans), "parts_used": 0, "stopped": "", "worst_error": 0.0, "candidates": 0, "kept": 0,
              "dense_seconds": 0.0, "median_depth": 0.0, "height": 0, "width": 0}
     fusion: VoxelFusion | None = None
@@ -627,6 +694,7 @@ def reconstruct(model, upscaler, frame_paths, window, args, dtype):
         kept["extrinsic"] += list(extrinsic[own])
         kept["intrinsic"] += list(part.intrinsic.cpu().numpy()[own])
         kept["depth"] += list(part.depth[own].half().cpu().numpy()[:, ::DEPTH_STRIDE, ::DEPTH_STRIDE])  # for the doors
+        kept["conf"] += list(part.confidence[own].half().cpu().numpy()[:, ::DEPTH_STRIDE, ::DEPTH_STRIDE])  # to filter the cloud
         kept["canvas"] += [(part.height, part.width)] * len(part.paths[own])  # windows of other shapes have other canvases
         stats["parts_used"] += 1
 

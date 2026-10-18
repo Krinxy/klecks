@@ -120,3 +120,11 @@ When running the built exe from a target dir, set `KLECKS_CONFIG_DIR`.
   source path as the last place to look); media/ and lab/ are found from that config folder.
 - If the 3D view cannot be created (WebGL), `klecksViewer.mount` returns false and `lastError()` says why; never let it throw
   into wasm, that leaves "Loading the scene" on screen for ever. viewer.js is hashed by Trunk so a webview cannot keep an old one.
+- Camera quality: VGGT places cameras window by window and the windows drift (smeared splat). `lab/colmap_poses.py` runs COLMAP 4
+  (GPU SIFT, exhaustive matching, global mapper; binary in `D:\Projects	ools\colmap`, override with `KLECKS_COLMAP`) on the frames,
+  `lab/sfm_align.py` fits a similarity transform of VGGT's cameras onto COLMAP's and moves cloud, depth, plan and doors into
+  COLMAP's frame, and installs COLMAP's undistorted dataset as `<scan>/colmap` for Brush. Any failure falls back to the VGGT cameras
+  (`--no-sfm` forces that). Blurred frames are dropped per film (`drop_blurry`), `lab/clean_splat.py` removes floaters from a splat,
+  `lab/eval_dataset.py` scores a Brush run on its held-out frames without needing the frame mapping.
+- The free camera levels the scan with the floor plan's up vector (`scan_orientation`); everything of the scan hangs on
+  `viewer.root`. Placed pieces report through the `klecks-piece` window event.

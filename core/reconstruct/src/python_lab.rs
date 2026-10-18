@@ -24,6 +24,10 @@ const MAX_PARENT_LEVELS: usize = 6;
 /// Share of the progress bar taken by the Python stage when a splat is trained afterwards
 /// (a few minutes, more for a long walk-through, against about ten for the training).
 const PYTHON_SHARE: f32 = 0.35;
+/// Refinement (densify and prune) runs about once per pass over the images: not more often than this ...
+const REFINE_MIN: u32 = 150;
+/// ... and not less often than this.
+const REFINE_MAX: u32 = 500;
 /// Brush reports nothing while training; until its first export we assume this speed.
 const FALLBACK_STEPS_PER_SECOND: f32 = 45.0;
 const EXPORT_PREFIX: &str = "splat_";
@@ -289,9 +293,19 @@ impl PythonLabReconstructor {
         let log_err = log.try_clone().map_err(ReconstructError::ScanDir)?;
 
         let steps = self.preset.train_iterations.max(1000);
+        // "Roughly the number of images it takes to cover the scene" (Brush): the frames of this scan.
+        let frames = std::fs::read_to_string(request.scan_dir.join("report.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .and_then(|report| report.get("frames")?.as_u64())
+            .unwrap_or(0) as u32;
+        let refine_every = frames.clamp(REFINE_MIN, REFINE_MAX);
         // Brush writes nothing while it trains, so progress is read from its periodic exports.
         let export_every = if steps.is_multiple_of(5) { steps / 5 } else { steps };
         let mut command = Self::worker(brush);
+        if self.preset.lpips_weight > 0.0 {
+            command.args(["--lpips-loss-weight", &self.preset.lpips_weight.to_string()]);
+        }
         command
             .arg(&dataset)
             .args(["--total-steps", &steps.to_string()])
@@ -300,7 +314,10 @@ impl PythonLabReconstructor {
             .args(["--export-name", &format!("{EXPORT_PREFIX}{{iter}}.ply")])
             .args(["--export-every", &export_every.to_string()])
             .args(["--max-splats", &self.preset.max_splats.to_string()])
-            .args(["--sh-degree", &self.settings.sh_degree.min(3).to_string()])
+            .args(["--sh-degree", &self.preset.sh_degree.unwrap_or(self.settings.sh_degree).min(3).to_string()])
+            // the splats keep growing for the first half of the training, and refine as often as the room has frames
+            .args(["--growth-stop-iter", &(steps / 2).to_string()])
+            .args(["--refine-every", &refine_every.to_string()])
             .args(["--eval-every", "100000000"])
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(log_err));
@@ -348,6 +365,13 @@ impl PythonLabReconstructor {
         )
         .map_err(ReconstructError::ScanDir)?;
         let _ = std::fs::remove_dir_all(&work_dir);
+        // Faint haze and stray specks are taken out of the finished splat (a few seconds of numpy). If that
+        // does not work the splat simply stays as it was trained.
+        let tidy = self.script.with_file_name("clean_splat.py");
+        if tidy.is_file() {
+            on_progress(&ProgressEvent { stage: "train".into(), pct: 99, message: "Tidying the splat".into() });
+            let _ = Self::worker(&self.python).arg(&tidy).arg(request.scan_dir.join("splat.ply")).status();
+        }
         Ok(())
     }
 }

@@ -27,12 +27,15 @@ pipeline:
     draft:            # about 2 minutes
       train_iterations: 7000
       max_splats: 1000000
+      sh_degree: 0              # no view-dependent colour: the smallest file
     high:             # about 10 minutes
       train_iterations: 30000
       max_splats: 3000000
-    max:              # about 20 minutes
+      sh_degree: 1
+    max:              # about 25 minutes
       train_iterations: 60000
       max_splats: 6000000
+      sh_degree: 2              # shine and reflections of furniture, about 150 bytes per splat
 
   floorplan:
     slice_min_m: 0.10       # height band above the floor used for the occupancy map

@@ -19,6 +19,11 @@ Only an NVIDIA/CUDA environment exists so far. Model weights land in `HF_HOME` (
 | `eval_reproject.py` | Projects a point cloud back into the real cameras and scores it |
 | `eval_splat.py` | Scores a Brush training on the frames it never saw (PSNR, SSIM, crispness) |
 | `render_points.py` | Renders a point cloud from four viewpoints to look at it |
+| `colmap_poses.py` | COLMAP 4 on the GPU (SIFT, exhaustive matching, global mapper) places every camera of the room together; undistorts the frames for Brush |
+| `sfm_align.py` | COLMAP's cameras + VGGT's depth, scaled per frame to COLMAP's points; builds the cloud, and installs COLMAP's dataset as `<scan>/colmap` |
+| `clean_splat.py` | Takes faint haze, runaway splats and isolated specks out of a trained splat (numpy) |
+| `eval_dataset.py` | Scores a Brush run on its held-out frames without knowing which frame is which |
+| `room_plan.py`, `detect_doors.py` | Floor plan with coverage scores; doors from OWLv2 + depth |
 
 ```powershell
 python lab/room_scan.py media/*.MP4 --out D:/Projects/klecks-runs/room --colmap
@@ -70,3 +75,22 @@ turning less, see `docs/capture-guide.md`).
 - The 4x-UltraSharp model needs fp16 + `channels_last` (≈1.2 s per 720p frame; without it 15–27 s).
 - Brush trains at ≈ 60 steps/s here and writes nothing to the console; progress is read from its
   periodic exports.
+
+## Camera placement: why the room looked smeared (2026-10-18)
+
+Seven films of one living room (387 frames, one long 4K walk of 307) gave a splat that looked like smoke.
+
+- **The data was fine, the camera placement was not.** VGGT places 56-frame windows and chains them. Against a global COLMAP
+  solution (373 of 387 frames placed, mean reprojection error 1.1 px) VGGT's *depth of one frame* is very accurate (inside a frame
+  it deviates from COLMAP's sparse points by a median 1.8 %), but its **scale differs by +-25 % from frame to frame** (3.4 to 5.5
+  COLMAP units per VGGT unit). Chaining windows cannot fix that; it is the smear.
+- Same frames, Brush 8,000 steps, held-out frames: **VGGT cameras 18.18 dB / SSIM 0.734 / crispness 0.13; COLMAP cameras
+  20.06 dB / SSIM 0.781 / crispness 0.18** (sparse start points only).
+- COLMAP sometimes places a few frames (blurred, plain wall) absurdly far away (6 of 373, one at 19,000 units): `colmap_poses.py`
+  removes them (`image_deleter`) before undistorting.
+- 83 of the walk's 307 frames are blurred by hand movement (Laplacian variance below 45 % of the film's median): `drop_blurry`
+  removes up to a quarter of a film's worst frames.
+- `clean_splat.py` removes 37 % of a splat's rows (mostly nearly invisible ones) with no visible change: it makes the file smaller
+  and faster to load but is not what smears the room.
+- Frame extraction: keyframes only (`-skip_frame nokey`) is 10x faster than decoding every frame of a 4K HDR film; NVDEC was not
+  faster once only keyframes are decoded.

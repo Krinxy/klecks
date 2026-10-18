@@ -93,6 +93,12 @@ impl PipelineSettings {
 pub struct PresetSettings {
     pub train_iterations: u32,
     pub max_splats: u32,
+    /// Colour detail of this quality (0-3); empty = the reconstruct setting.
+    #[serde(default)]
+    pub sh_degree: Option<u32>,
+    /// Weight of the perceptual loss (0 = off): sharper detail at the cost of training time.
+    #[serde(default)]
+    pub lpips_weight: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
