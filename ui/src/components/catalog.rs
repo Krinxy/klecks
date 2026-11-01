@@ -1,7 +1,7 @@
 // ---
 // Owner: Krinxy <dominic.bechtold@icloud.com>
 // Contributors: Krinxy <dominic.bechtold@icloud.com>
-// Last modified: 2026-10-18
+// Last modified: 2026-11-01
 // ---
 use leptos::prelude::*;
 use wasm_bindgen::JsValue;
@@ -9,7 +9,7 @@ use wasm_bindgen::JsValue;
 use crate::bridge::TauriBridge;
 use crate::components::screen::Screen;
 use crate::flow::ScanFlow;
-use crate::format::{capitalised, count_of};
+use crate::format::Text;
 use crate::model::Asset;
 
 /// The four sides a shop photo can show; a file is assigned by the word in its name (`sofa_front.jpg`).
@@ -171,7 +171,7 @@ fn catalog_body(
                                     class:is-selected=move || category.get().as_deref() == Some(id.as_str())
                                     on:click=move |_| category.set(Some(id_select.clone()))
                                 >
-                                    <span>{capitalised(&name)}</span><span class="cat-count">{count}</span>
+                                    <span>{Text::capitalised(&name)}</span><span class="cat-count">{count}</span>
                                 </button>
                             </li>
                         }
@@ -281,11 +281,11 @@ fn asset_detail(asset: Asset) -> impl IntoView {
         .filter(|path| surface || !any_side || side_of(path).is_none())
         .map(|path| TauriBridge::file_url(path))
         .collect();
-    let photos = count_of(asset.images.len(), "photo", "photos");
+    let photos = Text::count_of(asset.images.len(), "photo", "photos");
     view! {
         <div class="detail-head">
             <h2 class="detail-name small">{asset.name.clone()}</h2>
-            <span class="detail-kind">{if asset.category.is_empty() { "No category".to_string() } else { capitalised(&asset.category) }}</span>
+            <span class="detail-kind">{if asset.category.is_empty() { "No category".to_string() } else { Text::capitalised(&asset.category) }}</span>
         </div>
         <p class="detail-size" class:is-missing=asset.size.is_none()>{if surface { photos.clone() } else { size_text(&asset) }}</p>
 
@@ -297,7 +297,7 @@ fn asset_detail(asset: Asset) -> impl IntoView {
                             Some(url) => view! { <img src=url alt=side.clone() loading="lazy" /> }.into_any(),
                             None => view! { <span>"missing"</span> }.into_any(),
                         }}
-                        <figcaption>{capitalised(&side)}</figcaption>
+                        <figcaption>{Text::capitalised(&side)}</figcaption>
                     </figure>
                 } }).collect_view()}
             </div>

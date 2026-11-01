@@ -1,14 +1,14 @@
 // ---
 // Owner: Krinxy <dominic.bechtold@icloud.com>
 // Contributors: Krinxy <dominic.bechtold@icloud.com>
-// Last modified: 2026-10-18
+// Last modified: 2026-11-01
 // ---
 use leptos::prelude::*;
 use wasm_bindgen::JsValue;
 
 use crate::bridge::TauriBridge;
 use crate::flow::ScanFlow;
-use crate::format::{capitalised, count_of};
+use crate::format::Text;
 use crate::model::{RoomOverview, SettingsView};
 
 /// One film of the room and whether it is ticked for this scan.
@@ -55,7 +55,7 @@ pub fn ScanPlan(room_id: String, label: String, flow: ScanFlow, #[prop(into)] bl
             }
             if let Ok(settings) = TauriBridge::call::<SettingsView>("get_settings", JsValue::UNDEFINED).await {
                 let minutes = settings.presets.iter().find(|preset| preset.id == settings.preset).map_or(0, |preset| preset.minutes);
-                quality.set(Some((capitalised(&settings.preset), minutes)));
+                quality.set(Some((Text::capitalised(&settings.preset), minutes)));
             }
         });
     }
@@ -127,7 +127,7 @@ pub fn ScanPlan(room_id: String, label: String, flow: ScanFlow, #[prop(into)] bl
                             .get()
                             .map(|(name, minutes)| format!(" Quality {name}: about {minutes} minutes of training, plus a few minutes to reconstruct."))
                             .unwrap_or_default();
-                        format!("{} of {} ticked, {total:.0} MB.{time}", picked.len(), count_of(all, "file", "files"))
+                        format!("{} of {} ticked, {total:.0} MB.{time}", picked.len(), Text::count_of(all, "file", "files"))
                     }}
                 </p>
                 {move || blocker.get().map(|reason| view! { <p class="room-blocker">{reason}</p> })}

@@ -1,14 +1,14 @@
 // ---
 // Owner: Krinxy <dominic.bechtold@icloud.com>
 // Contributors: Krinxy <dominic.bechtold@icloud.com>
-// Last modified: 2026-10-18
+// Last modified: 2026-11-01
 // ---
 use leptos::prelude::*;
 use serde::Serialize;
 use wasm_bindgen::{JsCast, JsValue};
 
 use crate::bridge::{TauriBridge, Viewer3d};
-use crate::format::capitalised;
+use crate::format::Text;
 use crate::model::{Asset, Cut, Layout, Placed, Transform};
 
 /// Edge length of a piece without a known size, in centimetres.
@@ -94,7 +94,7 @@ impl Placement {
     }
 
     pub fn name_of(&self, asset: &str) -> String {
-        self.assets.with(|list| list.iter().find(|candidate| candidate.id == asset).map(|found| found.name.clone())).unwrap_or_else(|| capitalised(asset))
+        self.assets.with(|list| list.iter().find(|candidate| candidate.id == asset).map(|found| found.name.clone())).unwrap_or_else(|| Text::capitalised(asset))
     }
 
     /// The catalog picture of a piece (the one named front, else the first), as an address the view can load.

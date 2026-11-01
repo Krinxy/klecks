@@ -1,7 +1,7 @@
 // ---
 // Owner: Krinxy <dominic.bechtold@icloud.com>
 // Contributors: Krinxy <dominic.bechtold@icloud.com>
-// Last modified: 2026-10-18
+// Last modified: 2026-11-01
 // ---
 use leptos::prelude::*;
 use wasm_bindgen::JsValue;
@@ -9,7 +9,7 @@ use wasm_bindgen::JsValue;
 use crate::bridge::TauriBridge;
 use crate::components::room_picture::RoomPicture;
 use crate::flow::ScanFlow;
-use crate::format::{count_of, when};
+use crate::format::Text;
 use crate::model::{Asset, RoomView, View};
 
 const ITEMS: [&str; 5] = ["Rooms", "Catalog", "New scan", "Settings", "Quit"];
@@ -54,8 +54,8 @@ pub fn MainMenu(flow: ScanFlow) -> impl IntoView {
     on_cleanup(move || listener.remove());
 
     let detail = move |index: usize| match index {
-        0 => rooms.get().map(|list| count_of(list.len(), "room", "rooms")).unwrap_or_default(),
-        1 => assets.get().map(|n| count_of(n, "item", "items")).unwrap_or_default(),
+        0 => rooms.get().map(|list| Text::count_of(list.len(), "room", "rooms")).unwrap_or_default(),
+        1 => assets.get().map(|n| Text::count_of(n, "item", "items")).unwrap_or_default(),
         2 => "loose videos".to_string(),
         _ => String::new(),
     };
@@ -120,7 +120,7 @@ pub fn MainMenu(flow: ScanFlow) -> impl IntoView {
                         Some(scan) => format!(
                             "{}, scanned {}",
                             if scan.result.kind == "splats" { "Splat scene" } else { "Point cloud" },
-                            when(scan.modified_ms)
+                            Text::when(scan.modified_ms)
                         ),
                         None => "Not scanned yet".to_string(),
                     };
@@ -131,7 +131,7 @@ pub fn MainMenu(flow: ScanFlow) -> impl IntoView {
                             </div>
                             <div class="slab-room-line">
                                 <span class="slab-room-name">{entry.room.name.clone()}</span>
-                                <span class="slab-room-count">{crate::format::media_count(entry.room.videos.len(), entry.room.photos.len())}</span>
+                                <span class="slab-room-count">{crate::format::Text::media_count(entry.room.videos.len(), entry.room.photos.len())}</span>
                             </div>
                             <p class="slab-room-note">{note}</p>
                         </div>

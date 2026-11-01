@@ -1,7 +1,7 @@
 // ---
 // Owner: Krinxy <dominic.bechtold@icloud.com>
 // Contributors: Krinxy <dominic.bechtold@icloud.com>
-// Last modified: 2026-10-17
+// Last modified: 2026-11-01
 // ---
 mod commands;
 mod library_commands;
@@ -10,17 +10,22 @@ mod state;
 use state::AppState;
 use tauri::Manager;
 
-/// The viewer fetches scenes and the catalog shows photos through the asset protocol. Only the scans
-/// folder and the catalog's photos are readable; call again whenever those folders may have moved.
-pub fn refresh_asset_scope(app: &tauri::AppHandle) {
-    let state = app.state::<AppState>();
-    let config = state.config();
-    let Some(paths) = config.paths.as_ref() else { return };
-    let scope = app.asset_protocol_scope();
-    // The pictures of the rooms (covers) are read from the rooms folder as well.
-    for folder in [paths.scans.clone(), paths.media.join("assets"), paths.media.join("rooms")] {
-        if let Err(error) = scope.allow_directory(&folder, true) {
-            eprintln!("klecks: cannot allow {}: {error}", folder.display());
+/// What the webview may read through the asset protocol.
+pub struct AssetScope;
+
+impl AssetScope {
+    /// The viewer fetches scenes and the catalog shows photos through the asset protocol. Only the scans
+    /// folder and the catalog's photos are readable; call again whenever those folders may have moved.
+    pub fn refresh(app: &tauri::AppHandle) {
+        let state = app.state::<AppState>();
+        let config = state.config();
+        let Some(paths) = config.paths.as_ref() else { return };
+        let scope = app.asset_protocol_scope();
+        // The pictures of the rooms (covers) are read from the rooms folder as well.
+        for folder in [paths.scans.clone(), paths.media.join("assets"), paths.media.join("rooms")] {
+            if let Err(error) = scope.allow_directory(&folder, true) {
+                eprintln!("klecks: cannot allow {}: {error}", folder.display());
+            }
         }
     }
 }
@@ -32,7 +37,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(state)
         .setup(|app| {
-            refresh_asset_scope(app.handle());
+            AssetScope::refresh(app.handle());
             // Developer shortcut: a scan outside the scans folder may be opened on start.
             if let Some(scene) = &app.state::<AppState>().startup.scene {
                 app.asset_protocol_scope().allow_directory(&scene.scan_dir, true)?;

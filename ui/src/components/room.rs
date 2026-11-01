@@ -1,7 +1,7 @@
 // ---
 // Owner: Krinxy <dominic.bechtold@icloud.com>
 // Contributors: Krinxy <dominic.bechtold@icloud.com>
-// Last modified: 2026-10-18
+// Last modified: 2026-11-01
 // ---
 use leptos::prelude::*;
 
@@ -11,7 +11,7 @@ use crate::components::room_picture::add_videos_flow;
 use crate::components::scene_viewer::SceneViewer;
 use crate::components::stage::Stage;
 use crate::flow::ScanFlow;
-use crate::format::{count_of, when};
+use crate::format::Text;
 use crate::model::{DoorView, Plan, RoomOverview, RoomRef, Thin, VideoScore, VideoShare, View};
 use wasm_bindgen::JsValue;
 
@@ -86,12 +86,12 @@ fn room_body(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String>>
     let subtitle = match &data.scan {
         Some(scan) => format!(
             "{}, {} in the scene, {} from {}",
-            crate::format::media_count(data.room.videos.len(), data.room.photos.len()),
-            count_of(data.frames as usize, "frame", "frames"),
+            crate::format::Text::media_count(data.room.videos.len(), data.room.photos.len()),
+            Text::count_of(data.frames as usize, "frame", "frames"),
             if scan.result.kind == "splats" { "splat scene" } else { "point cloud" },
-            when(scan.modified_ms)
+            Text::when(scan.modified_ms)
         ),
-        None => format!("{}, not scanned yet", crate::format::media_count(data.room.videos.len(), data.room.photos.len())),
+        None => format!("{}, not scanned yet", crate::format::Text::media_count(data.room.videos.len(), data.room.photos.len())),
     };
     let newer = data.videos.iter().filter(|video| !video.scanned).count();
     let scan_result = data.scan.as_ref().map(|scan| scan.result.clone());
@@ -223,7 +223,7 @@ fn room_body(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String>>
                                 })}
                                 {(newer > 0).then(|| view! {
                                     <p class="media-note">{format!("{} not in the scene yet. Scan again to add {}.",
-                                        count_of(newer, "new video is", "new videos are"), if newer == 1 { "it" } else { "them" })}</p>
+                                        Text::count_of(newer, "new video is", "new videos are"), if newer == 1 { "it" } else { "them" })}</p>
                                 })}
                                 {(!has_videos).then(|| view! { <p class="media-note">"This room has no videos. Put them in its folder, then reconstruct."</p> })}
                             }.into_any(),
@@ -264,9 +264,9 @@ fn media_row(video: VideoShare, rank: usize, score: Option<VideoScore>, footprin
     } else if !video.scanned {
         format!("New, {:.0} MB", video.size_mb)
     } else if let Some(sees) = sees {
-        format!("{}, {:.0} MB, sees {sees}% of the room", count_of(video.frames as usize, "frame", "frames"), video.size_mb)
+        format!("{}, {:.0} MB, sees {sees}% of the room", Text::count_of(video.frames as usize, "frame", "frames"), video.size_mb)
     } else {
-        format!("{}, {:.0} MB", count_of(video.frames as usize, "frame", "frames"), video.size_mb)
+        format!("{}, {:.0} MB", Text::count_of(video.frames as usize, "frame", "frames"), video.size_mb)
     };
     let number = if !video.scanned {
         "new".to_string()
@@ -500,7 +500,7 @@ fn door_row(number: usize, door: DoorView, other_rooms: Vec<RoomRef>, room: Stri
     let (x, y) = (door.x, door.y);
     let reviewed = door.state != "detected";
     let note = match door.state.as_str() {
-        "detected" => format!("Seen in {}. Is it a door?", count_of(door.frames as usize, "frame", "frames")),
+        "detected" => format!("Seen in {}. Is it a door?", Text::count_of(door.frames as usize, "frame", "frames")),
         "manual" => "Placed by you".to_string(),
         _ => "Confirmed".to_string(),
     };

@@ -1,7 +1,7 @@
 // ---
 // Owner: Krinxy <dominic.bechtold@icloud.com>
 // Contributors: Krinxy <dominic.bechtold@icloud.com>
-// Last modified: 2026-10-17
+// Last modified: 2026-11-01
 // ---
 use leptos::prelude::*;
 use wasm_bindgen::JsValue;
@@ -32,7 +32,7 @@ pub fn App() -> impl IntoView {
                 if let Some(scene) = hooks.scene {
                     flow.show(scene);
                 } else if !hooks.autoscan_videos.is_empty() {
-                    let label = crate::format::count_of(hooks.autoscan_videos.len(), "video", "videos");
+                    let label = crate::format::Text::count_of(hooks.autoscan_videos.len(), "video", "videos");
                     flow.start(hooks.autoscan_videos, label);
                 }
             }

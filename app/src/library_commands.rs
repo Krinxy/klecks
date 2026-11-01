@@ -1,7 +1,7 @@
 // ---
 // Owner: Krinxy <dominic.bechtold@icloud.com>
 // Contributors: Krinxy <dominic.bechtold@icloud.com>
-// Last modified: 2026-10-18
+// Last modified: 2026-11-01
 // ---
 use std::path::PathBuf;
 use std::process::Command;
@@ -11,7 +11,7 @@ use klecks_reconstruct::{SceneKind, ScanResult};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
-use crate::commands::{all_scans, begin_scan, room_of_scan, ScanListItem};
+use crate::commands::{BYTES_PER_MB, ScanCatalog, ScanFolder, ScanListItem, ScanRunner};
 use crate::state::AppState;
 
 const MAX_LISTED_SCANS: usize = 40;
@@ -138,32 +138,207 @@ pub struct SettingsView {
     folders: Vec<FolderView>,
 }
 
-fn library(state: &AppState) -> Result<Library, String> {
-    let config = state.config();
-    let paths = config.paths.as_ref().ok_or("The configuration could not be loaded.")?;
-    let extensions = config
-        .settings
-        .as_ref()
-        .map(|settings| settings.capture.extensions.clone())
-        .unwrap_or_default();
-    Ok(Library::new(paths.media.clone(), extensions))
+/// Opens the media library from the loaded configuration.
+struct LibraryAccess;
+
+impl LibraryAccess {
+    pub fn open(state: &AppState) -> Result<Library, String> {
+        let config = state.config();
+        let paths = config.paths.as_ref().ok_or("The configuration could not be loaded.")?;
+        let extensions = config
+            .settings
+            .as_ref()
+            .map(|settings| settings.capture.extensions.clone())
+            .unwrap_or_default();
+        Ok(Library::new(paths.media.clone(), extensions))
+    }
+}
+
+/// The small files a room keeps next to its films (cover, layout, scan selection, door answers).
+struct RoomFiles<'a> {
+    room: &'a Room,
+}
+
+impl<'a> RoomFiles<'a> {
+    pub fn new(room: &'a Room) -> Self {
+        Self { room }
+    }
+
+    pub fn cover(&self) -> Option<String> {
+        let path = self.room.dir.join(COVER_FILE);
+        path.is_file().then(|| path.to_string_lossy().into_owned())
+    }
+
+    pub fn layout(&self) -> serde_json::Value {
+        std::fs::read_to_string(self.room.dir.join("layout.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_else(|| serde_json::json!({ "items": [], "cuts": [] }))
+    }
+
+    /// Films the person left out of the next scan (`selection.json` in the room's folder).
+    pub fn excluded(&self) -> Vec<String> {
+        std::fs::read_to_string(self.room.dir.join("selection.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .and_then(|value| value.get("excluded")?.as_array().cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|name| name.as_str().map(str::to_owned))
+            .collect()
+    }
+
+    pub fn marks(&self) -> Vec<DoorMark> {
+        std::fs::read_to_string(self.room.dir.join("doors.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default()
+    }
+}
+
+/// The doors of a room: detections from the plan with the person's answers laid over them.
+struct DoorViews;
+
+impl DoorViews {
+    pub fn near(a: (f64, f64), b: (f64, f64)) -> bool {
+        (a.0 - b.0).hypot(a.1 - b.1) <= SAME_DOOR
+    }
+
+    /// Detected doors from the plan, with the person's decisions laid over them, plus the doors placed by hand.
+    pub fn of(room: &Room, plan: Option<&serde_json::Value>) -> Vec<DoorView> {
+        let marks = RoomFiles::new(room).marks();
+        let mut taken = vec![false; marks.len()];
+        let number = |value: &serde_json::Value, key: &str| value.get(key).and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let mut views: Vec<DoorView> = plan
+            .and_then(|plan| plan.get("doors")?.as_array())
+            .into_iter()
+            .flatten()
+            .map(|door| {
+                let spot = (number(door, "x"), number(door, "y"));
+                let mark = marks.iter().position(|mark| Self::near((mark.x, mark.y), spot));
+                if let Some(index) = mark {
+                    taken[index] = true;
+                }
+                DoorView {
+                    x: spot.0,
+                    y: spot.1,
+                    width: number(door, "width"),
+                    score: number(door, "score"),
+                    frames: door.get("frames").and_then(|v| v.as_u64()).unwrap_or(0),
+                    state: mark.map(|index| marks[index].state.clone()).unwrap_or_else(|| "detected".into()),
+                    to: mark.and_then(|index| marks[index].to.clone()),
+                }
+            })
+            .collect();
+        for (mark, used) in marks.iter().zip(taken) {
+            if !used {
+                views.push(DoorView { x: mark.x, y: mark.y, width: 0.0, score: 1.0, frames: 0, state: mark.state.clone(), to: mark.to.clone() });
+            }
+        }
+        views
+    }
+}
+
+/// The scan folders of one room.
+struct ScanHistory;
+
+impl ScanHistory {
+    /// Every folder in the scans directory that belongs to a room, newest first.
+    pub fn of(scans: &std::path::Path, room: &str) -> Vec<ScanEntry> {
+        let mut entries: Vec<ScanEntry> = std::fs::read_dir(scans)
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().is_dir())
+            .filter(|entry| ScanFolder::room_of(&entry.file_name().to_string_lossy()) == room)
+            .map(|entry| {
+                let dir = entry.path();
+                let modified_ms = entry
+                    .metadata()
+                    .and_then(|meta| meta.modified())
+                    .ok()
+                    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|elapsed| elapsed.as_millis() as u64)
+                    .unwrap_or(0);
+                let report: Option<serde_json::Value> =
+                    std::fs::read_to_string(dir.join("report.json")).ok().and_then(|text| serde_json::from_str(&text).ok());
+                let scan = ScanResult::from_dir(&dir);
+                let state = match &scan {
+                    Some(result) if result.kind == SceneKind::Splats => "splats",
+                    Some(_) => "points",
+                    None => "unfinished",
+                };
+                let note = if scan.is_none() {
+                    std::fs::read_to_string(dir.join("log.txt"))
+                        .ok()
+                        .and_then(|text| text.lines().rev().find(|line| !line.trim().is_empty()).map(str::to_owned))
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                ScanEntry {
+                    name: entry.file_name().to_string_lossy().into_owned(),
+                    modified_ms,
+                    state,
+                    frames: report.as_ref().and_then(|r| r.get("frames")?.as_u64()).unwrap_or(0) as u32,
+                    seconds: report.as_ref().and_then(|r| r.get("total_seconds")?.as_f64()).unwrap_or(0.0) as u32,
+                    scan,
+                    note,
+                }
+            })
+            .collect();
+        entries.sort_by_key(|entry| std::cmp::Reverse(entry.modified_ms));
+        entries
+    }
+}
+
+impl SettingsView {
+    pub fn of(state: &AppState) -> Result<SettingsView, String> {
+        let config = state.config();
+        let settings = config.settings.as_ref().ok_or("The configuration could not be loaded.")?;
+        let paths = config.paths.as_ref().ok_or("The configuration could not be loaded.")?;
+        let shown = |path: &PathBuf| path.to_string_lossy().into_owned();
+        Ok(SettingsView {
+            preset: settings.pipeline.preset.clone(),
+            presets: settings
+                .pipeline
+                .presets
+                .iter()
+                .map(|(id, preset)| PresetView {
+                    id: id.clone(),
+                    train_iterations: preset.train_iterations,
+                    max_splats: preset.max_splats,
+                    minutes: (preset.train_iterations as f32 / STEPS_PER_MINUTE).ceil() as u32 + PREPARATION_MINUTES,
+                })
+                .collect(),
+            upscale_model: settings.pipeline.reconstruct.upscale_model.clone(),
+            brush: settings.pipeline.reconstruct.brush.clone(),
+            reconstruct_error: config.reconstructor.as_ref().err().cloned(),
+            folders: vec![
+                FolderView { kind: "media", label: "Media library", path: shown(&paths.media), setting: Some("paths.media_dir") },
+                FolderView { kind: "scans", label: "Finished scans", path: shown(&paths.scans), setting: Some("paths.scans_dir") },
+                FolderView { kind: "models", label: "Models", path: shown(&paths.models), setting: Some("paths.models_dir") },
+                FolderView { kind: "config", label: "Your settings files", path: shown(&paths.user_config), setting: None },
+            ],
+        })
+    }
 }
 
 /// Rooms found in `media/rooms/`, each with how many scans of it exist and the newest one.
 #[tauri::command]
 pub fn list_rooms(state: State<AppState>) -> Result<Vec<RoomView>, String> {
-    let rooms = library(&state)?.rooms();
-    let scans = state.config().paths.as_ref().map(all_scans).unwrap_or_default();
+    let rooms = LibraryAccess::open(&state)?.rooms();
+    let scans = state.config().paths.as_ref().map(|paths| ScanCatalog::new(paths).list()).unwrap_or_default();
     Ok(rooms
         .into_iter()
         .map(|room| {
             let mut own = scans.iter().filter(|scan| scan.room == room.id);
             let latest_scan = own.next().cloned();
             RoomView {
-                total_mb: room.total_bytes as f64 / (1024.0 * 1024.0),
+                total_mb: room.total_bytes as f64 / BYTES_PER_MB,
                 scan_count: latest_scan.iter().count() + own.count(),
                 latest_scan,
-                cover: existing_cover(&room),
+                cover: RoomFiles::new(&room).cover(),
                 room,
             }
         })
@@ -173,12 +348,12 @@ pub fn list_rooms(state: State<AppState>) -> Result<Vec<RoomView>, String> {
 /// The room with its films and, when it was scanned, the contribution of each film and the plan.
 #[tauri::command]
 pub fn room_overview(state: State<AppState>, room: String) -> Result<RoomOverview, String> {
-    let found = library(&state)?.room(&room).ok_or("That room does not exist.")?;
+    let found = LibraryAccess::open(&state)?.room(&room).ok_or("That room does not exist.")?;
     let scan = state
         .config()
         .paths
         .as_ref()
-        .map(all_scans)
+        .map(|paths| ScanCatalog::new(paths).list())
         .unwrap_or_default()
         .into_iter()
         .find(|scan| scan.room == found.id);
@@ -209,7 +384,7 @@ pub fn room_overview(state: State<AppState>, room: String) -> Result<RoomOvervie
         .iter()
         .map(|files| files.as_array().map(|list| list.iter().filter_map(|name| name.as_str().map(str::to_owned)).collect()).unwrap_or_default())
         .collect();
-    let excluded = read_excluded(&found);
+    let excluded = RoomFiles::new(&found).excluded();
     let media: Vec<(&klecks_library::VideoFile, &'static str)> =
         found.videos.iter().map(|file| (file, "video")).chain(found.photos.iter().map(|file| (file, "photo"))).collect();
     let mut videos: Vec<VideoShare> = media
@@ -225,7 +400,7 @@ pub fn room_overview(state: State<AppState>, room: String) -> Result<RoomOvervie
             };
             VideoShare {
                 name: video.name.clone(),
-                size_mb: video.size_bytes as f64 / (1024.0 * 1024.0),
+                size_mb: video.size_bytes as f64 / BYTES_PER_MB,
                 frames: used,
                 share_pct: (used * 100).checked_div(frames).unwrap_or(0) as u8,
                 scanned: at.is_some(),
@@ -250,16 +425,16 @@ pub fn room_overview(state: State<AppState>, room: String) -> Result<RoomOvervie
         .collect();
     videos.sort_by_key(|video| std::cmp::Reverse(video.frames));
     let plan = read("plan.json");
-    let history = state.config().paths.as_ref().map(|paths| scan_history(&paths.scans, &found.id)).unwrap_or_default();
-    let doors = door_views(&found, plan.as_ref());
-    let other_rooms = library(&state)?
+    let history = state.config().paths.as_ref().map(|paths| ScanHistory::of(&paths.scans, &found.id)).unwrap_or_default();
+    let doors = DoorViews::of(&found, plan.as_ref());
+    let other_rooms = LibraryAccess::open(&state)?
         .rooms()
         .into_iter()
         .filter(|other| other.id != found.id)
         .map(|other| RoomRef { id: other.id, name: other.name })
         .collect();
-    let layout = read_layout(&found);
-    let cover = existing_cover(&found);
+    let layout = RoomFiles::new(&found).layout();
+    let cover = RoomFiles::new(&found).cover();
     Ok(RoomOverview { room: found, scan, videos, frames, plan, history, doors, other_rooms, layout, cover })
 }
 
@@ -272,17 +447,12 @@ const MAX_ROOM_NAME: usize = 40;
 /// Same colour mapping as the lab script: HDR phone films would look grey without it.
 const COVER_TONEMAP: &str = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p";
 
-fn existing_cover(room: &Room) -> Option<String> {
-    let path = room.dir.join(COVER_FILE);
-    path.is_file().then(|| path.to_string_lossy().into_owned())
-}
-
 /// A picture of the room for the menu and the lists: a frame from its latest scan, else one cut from its first
 /// film. Made once and kept as `cover.jpg` in the room's folder (delete the file to get a new one).
 #[tauri::command(async)]
 pub async fn room_cover(state: State<'_, AppState>, room: String) -> Result<Option<String>, String> {
-    let found = library(&state)?.room(&room).ok_or("That room does not exist.")?;
-    if let Some(done) = existing_cover(&found) {
+    let found = LibraryAccess::open(&state)?.room(&room).ok_or("That room does not exist.")?;
+    if let Some(done) = RoomFiles::new(&found).cover() {
         return Ok(Some(done));
     }
     // a middle frame of the scan's longest film is already upright and tone-mapped
@@ -290,7 +460,7 @@ pub async fn room_cover(state: State<'_, AppState>, room: String) -> Result<Opti
         .config()
         .paths
         .as_ref()
-        .map(all_scans)
+        .map(|paths| ScanCatalog::new(paths).list())
         .unwrap_or_default()
         .into_iter()
         .find(|scan| scan.room == found.id)
@@ -345,7 +515,7 @@ pub fn create_room(state: State<AppState>, name: String, kind: String) -> Result
     if clean.is_empty() || clean.chars().count() > MAX_ROOM_NAME {
         return Err(format!("Give the room a name of 1 to {MAX_ROOM_NAME} letters, numbers or spaces."));
     }
-    let rooms = library(&state)?.rooms_dir();
+    let rooms = LibraryAccess::open(&state)?.rooms_dir();
     let dir = rooms.join(&clean);
     if dir.exists() {
         return Err("A room with that name exists already.".into());
@@ -360,7 +530,7 @@ pub fn create_room(state: State<AppState>, name: String, kind: String) -> Result
 /// Copies films into a room's folder (the originals stay where they are). Returns how many were added.
 #[tauri::command(async)]
 pub async fn add_videos(state: State<'_, AppState>, room: String, paths: Vec<String>) -> Result<usize, String> {
-    let found = library(&state)?.room(&room).ok_or("That room does not exist.")?;
+    let found = LibraryAccess::open(&state)?.room(&room).ok_or("That room does not exist.")?;
     let mut extensions = state
         .config()
         .settings
@@ -394,19 +564,12 @@ pub async fn add_videos(state: State<'_, AppState>, room: String, paths: Vec<Str
     .map_err(|error| error.to_string())?
 }
 
-fn read_layout(room: &Room) -> serde_json::Value {
-    std::fs::read_to_string(room.dir.join("layout.json"))
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_else(|| serde_json::json!({ "items": [], "cuts": [] }))
-}
-
 /// Saves the furniture and cut-outs of a room. The shape is the UI's business (items, cuts, a scale override);
 /// the backend only makes sure it is an object and keeps it small.
 #[tauri::command]
 pub fn save_layout(state: State<AppState>, room: String, layout: serde_json::Value) -> Result<(), String> {
     const MAX_BYTES: usize = 1_000_000;
-    let found = library(&state)?.room(&room).ok_or("That room does not exist.")?;
+    let found = LibraryAccess::open(&state)?.room(&room).ok_or("That room does not exist.")?;
     if !layout.is_object() {
         return Err("The layout is not valid.".into());
     }
@@ -417,76 +580,19 @@ pub fn save_layout(state: State<AppState>, room: String, layout: serde_json::Val
     std::fs::write(found.dir.join("layout.json"), text).map_err(|error| format!("Could not save the layout: {error}"))
 }
 
-/// Films the person left out of the next scan (`selection.json` in the room's folder).
-fn read_excluded(room: &Room) -> Vec<String> {
-    std::fs::read_to_string(room.dir.join("selection.json"))
-        .ok()
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .and_then(|value| value.get("excluded")?.as_array().cloned())
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|name| name.as_str().map(str::to_owned))
-        .collect()
-}
-
 /// Doors closer than this many plan cells are the same door.
 const SAME_DOOR: f64 = 5.0;
-
-fn read_marks(room: &Room) -> Vec<DoorMark> {
-    std::fs::read_to_string(room.dir.join("doors.json"))
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
-}
-
-fn near(a: (f64, f64), b: (f64, f64)) -> bool {
-    (a.0 - b.0).hypot(a.1 - b.1) <= SAME_DOOR
-}
-
-/// Detected doors from the plan, with the person's decisions laid over them, plus the doors placed by hand.
-fn door_views(room: &Room, plan: Option<&serde_json::Value>) -> Vec<DoorView> {
-    let marks = read_marks(room);
-    let mut taken = vec![false; marks.len()];
-    let number = |value: &serde_json::Value, key: &str| value.get(key).and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let mut views: Vec<DoorView> = plan
-        .and_then(|plan| plan.get("doors")?.as_array())
-        .into_iter()
-        .flatten()
-        .map(|door| {
-            let spot = (number(door, "x"), number(door, "y"));
-            let mark = marks.iter().position(|mark| near((mark.x, mark.y), spot));
-            if let Some(index) = mark {
-                taken[index] = true;
-            }
-            DoorView {
-                x: spot.0,
-                y: spot.1,
-                width: number(door, "width"),
-                score: number(door, "score"),
-                frames: door.get("frames").and_then(|v| v.as_u64()).unwrap_or(0),
-                state: mark.map(|index| marks[index].state.clone()).unwrap_or_else(|| "detected".into()),
-                to: mark.and_then(|index| marks[index].to.clone()),
-            }
-        })
-        .collect();
-    for (mark, used) in marks.iter().zip(taken) {
-        if !used {
-            views.push(DoorView { x: mark.x, y: mark.y, width: 0.0, score: 1.0, frames: 0, state: mark.state.clone(), to: mark.to.clone() });
-        }
-    }
-    views
-}
 
 /// Saves the person's answer about one door: confirm it, reject it, add one by hand, link it to another room,
 /// or take the answer back (`state` "detected").
 #[tauri::command]
 pub fn set_door(state: State<AppState>, room: String, x: f64, y: f64, status: String, to: Option<String>) -> Result<RoomOverview, String> {
-    let found = library(&state)?.room(&room).ok_or("That room does not exist.")?;
+    let found = LibraryAccess::open(&state)?.room(&room).ok_or("That room does not exist.")?;
     if !["confirmed", "rejected", "manual", "detected"].contains(&status.as_str()) {
         return Err("Unknown door state.".into());
     }
-    let mut marks = read_marks(&found);
-    marks.retain(|mark| !near((mark.x, mark.y), (x, y)));
+    let mut marks = RoomFiles::new(&found).marks();
+    marks.retain(|mark| !DoorViews::near((mark.x, mark.y), (x, y)));
     if status != "detected" {
         marks.push(DoorMark { x, y, state: status, to: to.filter(|id| !id.is_empty() && id != &found.id) });
     }
@@ -504,10 +610,10 @@ pub struct Apartment {
 
 #[tauri::command]
 pub fn apartment(state: State<AppState>) -> Result<Apartment, String> {
-    let rooms = library(&state)?.rooms();
+    let rooms = LibraryAccess::open(&state)?.rooms();
     let mut links: Vec<(String, String)> = Vec::new();
     for room in &rooms {
-        for mark in read_marks(room) {
+        for mark in RoomFiles::new(room).marks() {
             let Some(to) = mark.to else { continue };
             if mark.state == "rejected" || !rooms.iter().any(|other| other.id == to) {
                 continue;
@@ -521,65 +627,17 @@ pub fn apartment(state: State<AppState>) -> Result<Apartment, String> {
     Ok(Apartment { rooms: rooms.into_iter().map(|room| RoomRef { id: room.id, name: room.name }).collect(), links })
 }
 
-/// Every folder in the scans directory that belongs to a room, newest first.
-fn scan_history(scans: &std::path::Path, room: &str) -> Vec<ScanEntry> {
-    let mut entries: Vec<ScanEntry> = std::fs::read_dir(scans)
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().is_dir())
-        .filter(|entry| room_of_scan(&entry.file_name().to_string_lossy()) == room)
-        .map(|entry| {
-            let dir = entry.path();
-            let modified_ms = entry
-                .metadata()
-                .and_then(|meta| meta.modified())
-                .ok()
-                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|elapsed| elapsed.as_millis() as u64)
-                .unwrap_or(0);
-            let report: Option<serde_json::Value> =
-                std::fs::read_to_string(dir.join("report.json")).ok().and_then(|text| serde_json::from_str(&text).ok());
-            let scan = ScanResult::from_dir(&dir);
-            let state = match &scan {
-                Some(result) if result.kind == SceneKind::Splats => "splats",
-                Some(_) => "points",
-                None => "unfinished",
-            };
-            let note = if scan.is_none() {
-                std::fs::read_to_string(dir.join("log.txt"))
-                    .ok()
-                    .and_then(|text| text.lines().rev().find(|line| !line.trim().is_empty()).map(str::to_owned))
-                    .unwrap_or_default()
-            } else {
-                String::new()
-            };
-            ScanEntry {
-                name: entry.file_name().to_string_lossy().into_owned(),
-                modified_ms,
-                state,
-                frames: report.as_ref().and_then(|r| r.get("frames")?.as_u64()).unwrap_or(0) as u32,
-                seconds: report.as_ref().and_then(|r| r.get("total_seconds")?.as_f64()).unwrap_or(0.0) as u32,
-                scan,
-                note,
-            }
-        })
-        .collect();
-    entries.sort_by_key(|entry| std::cmp::Reverse(entry.modified_ms));
-    entries
-}
-
 /// Furniture found in `media/assets/`.
 #[tauri::command]
 pub fn list_assets(state: State<AppState>) -> Result<Vec<Asset>, String> {
-    Ok(library(&state)?.assets())
+    Ok(LibraryAccess::open(&state)?.assets())
 }
 
 /// Scans that don't belong to a room of the library (dropped loose videos, deleted rooms).
 #[tauri::command]
 pub fn list_scans(state: State<AppState>) -> Result<Vec<ScanListItem>, String> {
-    let room_ids: Vec<String> = library(&state)?.rooms().into_iter().map(|room| room.id).collect();
-    let mut scans = state.config().paths.as_ref().map(all_scans).unwrap_or_default();
+    let room_ids: Vec<String> = LibraryAccess::open(&state)?.rooms().into_iter().map(|room| room.id).collect();
+    let mut scans = state.config().paths.as_ref().map(|paths| ScanCatalog::new(paths).list()).unwrap_or_default();
     scans.retain(|scan| !room_ids.contains(&scan.room));
     scans.truncate(MAX_LISTED_SCANS);
     Ok(scans)
@@ -590,7 +648,7 @@ pub fn list_scans(state: State<AppState>) -> Result<Vec<ScanListItem>, String> {
 pub fn start_room_scan(app: AppHandle, room: String, videos: Option<Vec<String>>) -> Result<(), String> {
     let found = {
         let state = app.state::<AppState>();
-        library(&state)?.room(&room)
+        LibraryAccess::open(&state)?.room(&room)
     };
     let found = found.ok_or("That room does not exist.")?;
     if found.videos.is_empty() && found.photos.is_empty() {
@@ -601,7 +659,7 @@ pub fn start_room_scan(app: AppHandle, room: String, videos: Option<Vec<String>>
     let everything: Vec<&klecks_library::VideoFile> = found.videos.iter().chain(found.photos.iter()).collect();
     let excluded: Vec<String> = match &videos {
         Some(chosen) => everything.iter().filter(|file| !chosen.contains(&file.name)).map(|file| file.name.clone()).collect(),
-        None => read_excluded(&found),
+        None => RoomFiles::new(&found).excluded(),
     };
     let chosen: Vec<PathBuf> = everything.iter().filter(|file| !excluded.contains(&file.name)).map(|file| file.path.clone()).collect();
     if chosen.is_empty() {
@@ -611,42 +669,12 @@ pub fn start_room_scan(app: AppHandle, room: String, videos: Option<Vec<String>>
         let text = serde_json::to_string_pretty(&serde_json::json!({ "excluded": excluded })).map_err(|error| error.to_string())?;
         std::fs::write(found.dir.join("selection.json"), text).map_err(|error| format!("Could not save the selection: {error}"))?;
     }
-    begin_scan(app, chosen, Some(found.id))
-}
-
-fn settings_view(state: &AppState) -> Result<SettingsView, String> {
-    let config = state.config();
-    let settings = config.settings.as_ref().ok_or("The configuration could not be loaded.")?;
-    let paths = config.paths.as_ref().ok_or("The configuration could not be loaded.")?;
-    let shown = |path: &PathBuf| path.to_string_lossy().into_owned();
-    Ok(SettingsView {
-        preset: settings.pipeline.preset.clone(),
-        presets: settings
-            .pipeline
-            .presets
-            .iter()
-            .map(|(id, preset)| PresetView {
-                id: id.clone(),
-                train_iterations: preset.train_iterations,
-                max_splats: preset.max_splats,
-                minutes: (preset.train_iterations as f32 / STEPS_PER_MINUTE).ceil() as u32 + PREPARATION_MINUTES,
-            })
-            .collect(),
-        upscale_model: settings.pipeline.reconstruct.upscale_model.clone(),
-        brush: settings.pipeline.reconstruct.brush.clone(),
-        reconstruct_error: config.reconstructor.as_ref().err().cloned(),
-        folders: vec![
-            FolderView { kind: "media", label: "Media library", path: shown(&paths.media), setting: Some("paths.media_dir") },
-            FolderView { kind: "scans", label: "Finished scans", path: shown(&paths.scans), setting: Some("paths.scans_dir") },
-            FolderView { kind: "models", label: "Models", path: shown(&paths.models), setting: Some("paths.models_dir") },
-            FolderView { kind: "config", label: "Your settings files", path: shown(&paths.user_config), setting: None },
-        ],
-    })
+    ScanRunner::begin(app, chosen, Some(found.id))
 }
 
 #[tauri::command]
 pub fn get_settings(state: State<AppState>) -> Result<SettingsView, String> {
-    settings_view(&state)
+    SettingsView::of(&state)
 }
 
 /// Settings the Settings screen may change; anything else is refused.
@@ -681,8 +709,8 @@ pub fn set_setting(app: AppHandle, key: String, value: String) -> Result<Setting
         loader.set_text_override(&key, &value).map_err(|error| error.to_string())?;
     }
     state.reload();
-    crate::refresh_asset_scope(&app);
-    settings_view(&state)
+    crate::AssetScope::refresh(&app);
+    SettingsView::of(&state)
 }
 
 /// Brings a setting back to its shipped default.
@@ -699,8 +727,8 @@ pub fn reset_setting(app: AppHandle, key: String) -> Result<SettingsView, String
         .clear_override(&key)
         .map_err(|error| error.to_string())?;
     state.reload();
-    crate::refresh_asset_scope(&app);
-    settings_view(&state)
+    crate::AssetScope::refresh(&app);
+    SettingsView::of(&state)
 }
 
 /// Opens one of klecks' own folders in the file manager. Only named folders, never a path from the UI.

@@ -1,7 +1,7 @@
 // ---
 // Owner: Krinxy <dominic.bechtold@icloud.com>
 // Contributors: Krinxy <dominic.bechtold@icloud.com>
-// Last modified: 2026-10-18
+// Last modified: 2026-11-01
 // ---
 use leptos::prelude::*;
 use wasm_bindgen::JsValue;
@@ -10,7 +10,7 @@ use crate::bridge::TauriBridge;
 use crate::components::room_picture::{add_videos_flow, kind_icon, NewRoom, RoomPicture};
 use crate::components::screen::Screen;
 use crate::flow::ScanFlow;
-use crate::format::{clock, when};
+use crate::format::Text;
 use crate::model::{Apartment, RoomOverview, RoomView, ScanEntry, ScanListItem, View};
 
 fn reveal(kind: &'static str) {
@@ -102,7 +102,7 @@ pub fn RoomsScreen(flow: ScanFlow, #[prop(into)] blocker: Signal<Option<String>>
                                                 <li>
                                                     <button class="loose-row" on:click=move |_| flow.show(result.clone())>
                                                         <span>{scan.room.clone()}</span>
-                                                        <span class="loose-meta">{format!("{kind}, {}", when(scan.modified_ms))}</span>
+                                                        <span class="loose-meta">{format!("{kind}, {}", Text::when(scan.modified_ms))}</span>
                                                     </button>
                                                 </li>
                                             }
@@ -140,7 +140,7 @@ fn rail_item(entry: RoomView, selected: RwSignal<Option<String>>) -> impl IntoVi
     let id_class = id.clone();
     let id_click = id.clone();
     let id_hover = id;
-    let media = crate::format::media_count(entry.room.videos.len(), entry.room.photos.len());
+    let media = crate::format::Text::media_count(entry.room.videos.len(), entry.room.photos.len());
     let note = match (&entry.latest_scan, entry.room.videos.is_empty() && entry.room.photos.is_empty()) {
         (_, true) => "No films or photos".to_string(),
         (Some(_), _) => media,
@@ -184,7 +184,7 @@ fn room_detail(data: RoomOverview, flow: ScanFlow, blocker: Signal<Option<String
         Some(scan) => format!(
             "{} from {}",
             if scan.result.kind == "splats" { "Splat scene" } else { "Point cloud" },
-            when(scan.modified_ms)
+            Text::when(scan.modified_ms)
         ),
         None => "Not scanned yet".to_string(),
     };
@@ -267,14 +267,14 @@ fn history_row(
     let facts = if stopped {
         if entry.note.is_empty() { "No result was saved".to_string() } else { entry.note.clone() }
     } else {
-        format!("{} frames, took {}", entry.frames, clock(entry.seconds))
+        format!("{} frames, took {}", entry.frames, Text::clock(entry.seconds))
     };
     let retry_label = if stopped { "Retry" } else { "Render again" };
     view! {
         <li class="hist-row" class:is-stopped=stopped>
             <span class="hist-state" class:is-splat=entry.state == "splats">{label}</span>
             <span class="hist-main">
-                <span class="hist-when">{when(entry.modified_ms)}{newest.then(|| view! { <em class="hist-new">"latest"</em> })}</span>
+                <span class="hist-when">{Text::when(entry.modified_ms)}{newest.then(|| view! { <em class="hist-new">"latest"</em> })}</span>
                 <span class="hist-facts">{facts}</span>
             </span>
             <span class="hist-actions">

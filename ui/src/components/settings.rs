@@ -1,7 +1,7 @@
 // ---
 // Owner: Krinxy <dominic.bechtold@icloud.com>
 // Contributors: Krinxy <dominic.bechtold@icloud.com>
-// Last modified: 2026-10-18
+// Last modified: 2026-11-01
 // ---
 use leptos::prelude::*;
 use wasm_bindgen::JsValue;
@@ -9,7 +9,7 @@ use wasm_bindgen::JsValue;
 use crate::bridge::TauriBridge;
 use crate::components::screen::Screen;
 use crate::flow::ScanFlow;
-use crate::format::{capitalised, millions};
+use crate::format::Text;
 use crate::model::{AppStatus, FolderView, PresetView, SettingsView};
 
 #[derive(Clone, Copy, PartialEq)]
@@ -123,9 +123,9 @@ fn quality(loaded: SettingsView, settings: RwSignal<Option<SettingsView>>, notic
                             class:is-selected=selected
                             on:click=move |_| save(settings, notice, "set_setting", "pipeline.preset".into(), id.clone())
                         >
-                            <span class="tile-name">{capitalised(&preset.id)}</span>
+                            <span class="tile-name">{Text::capitalised(&preset.id)}</span>
                             <span class="tile-big">{format!("{} min", preset.minutes)}</span>
-                            <span class="tile-detail">{format!("up to {} splats", millions(preset.max_splats))}</span>
+                            <span class="tile-detail">{format!("up to {} splats", Text::millions(preset.max_splats))}</span>
                             <span class="tile-detail">{format!("{} training steps", preset.train_iterations)}</span>
                         </button>
                     </li>
@@ -205,7 +205,7 @@ fn system(loaded: SettingsView, status: RwSignal<Option<AppStatus>>) -> impl Int
             <dt>"Graphics card"</dt><dd>{gpu}</dd>
             <dt>"Reconstruction"</dt><dd class:is-bad=loaded.reconstruct_error.is_some()>{reconstruction}</dd>
             <dt>"Splat trainer"</dt><dd>{trainer}</dd>
-            <dt>"Quality"</dt><dd>{capitalised(&loaded.preset)}</dd>
+            <dt>"Quality"</dt><dd>{Text::capitalised(&loaded.preset)}</dd>
         </dl>
         <p class="pane-text pane-faint">"klecks never calculates on the processor: without an allowed graphics card a scan does not start."</p>
     }

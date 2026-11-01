@@ -1,7 +1,7 @@
 // ---
 // Owner: Krinxy <dominic.bechtold@icloud.com>
 // Contributors: Krinxy <dominic.bechtold@icloud.com>
-// Last modified: 2026-10-18
+// Last modified: 2026-11-01
 // ---
 use std::time::Duration;
 
@@ -9,7 +9,7 @@ use leptos::prelude::*;
 
 use crate::bridge::{TauriBridge, Viewer3d};
 use crate::flow::ScanFlow;
-use crate::format::with_commas;
+use crate::format::Text;
 use crate::model::ScanResult;
 
 const HOST_ID: &str = "klecks-viewer";
@@ -66,7 +66,7 @@ pub fn SceneViewer(scan: ScanResult, flow: ScanFlow, #[prop(optional)] embedded:
             match outcome {
                 Ok(scene) => {
                     let noun = if scene.kind == "splats" { "splats" } else { "points" };
-                    summary.set(format!("{} {noun}", with_commas(scene.count)));
+                    summary.set(format!("{} {noun}", Text::with_commas(scene.count)));
                 }
                 Err(message) => error.set(Some(message)),
             }

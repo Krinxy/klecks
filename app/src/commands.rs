@@ -1,7 +1,7 @@
 // ---
 // Owner: Krinxy <dominic.bechtold@icloud.com>
 // Contributors: Krinxy <dominic.bechtold@icloud.com>
-// Last modified: 2026-10-18
+// Last modified: 2026-11-01
 // ---
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -15,6 +15,8 @@ use tauri_plugin_dialog::DialogExt;
 
 use crate::state::{AppState, StartupHooks};
 
+/// Bytes in a megabyte (1024 * 1024).
+pub const BYTES_PER_MB: f64 = 1_048_576.0;
 const FALLBACK_EXTENSIONS: [&str; 5] = ["mp4", "mov", "mkv", "webm", "avi"];
 
 #[derive(Serialize)]
@@ -69,8 +71,8 @@ pub async fn pick_videos(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
-    let extensions = allowed_extensions(&state);
-    let extension_refs: Vec<&str> = extensions.iter().map(String::as_str).collect();
+    let filter = VideoFilter::of(&state);
+    let extension_refs: Vec<&str> = filter.extensions().iter().map(String::as_str).collect();
     let picked = app
         .dialog()
         .file()
@@ -88,7 +90,7 @@ pub async fn pick_videos(
 /// Validates what was chosen or dropped: video files, or folders (their videos are used).
 #[tauri::command]
 pub fn accept_videos(paths: Vec<String>, state: State<AppState>) -> Result<Vec<VideoInfo>, String> {
-    let extensions = allowed_extensions(&state);
+    let filter = VideoFilter::of(&state);
     let mut videos = Vec::new();
     for path in &paths {
         let path = Path::new(path);
@@ -97,17 +99,17 @@ pub fn accept_videos(paths: Vec<String>, state: State<AppState>) -> Result<Vec<V
                 .map_err(|error| format!("Cannot read the folder: {error}"))?
                 .filter_map(Result::ok)
                 .map(|entry| entry.path())
-                .filter(|file| file.is_file() && has_extension(file, &extensions))
+                .filter(|file| file.is_file() && filter.accepts(file))
                 .collect();
             inside.sort();
             videos.extend(inside);
-        } else if has_extension(path, &extensions) && path.is_file() {
+        } else if filter.accepts(path) && path.is_file() {
             videos.push(path.to_path_buf());
         }
     }
     videos.dedup();
     if videos.is_empty() {
-        return Err(format!("No supported video found (use {}).", extensions.join(", ")));
+        return Err(format!("No supported video found (use {}).", filter.extensions().join(", ")));
     }
     videos
         .into_iter()
@@ -115,7 +117,7 @@ pub fn accept_videos(paths: Vec<String>, state: State<AppState>) -> Result<Vec<V
             let metadata = std::fs::metadata(&file).map_err(|error| format!("Cannot read the file: {error}"))?;
             Ok(VideoInfo {
                 name: file.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default(),
-                size_mb: metadata.len() as f64 / (1024.0 * 1024.0),
+                size_mb: metadata.len() as f64 / BYTES_PER_MB,
                 path: file.to_string_lossy().into_owned(),
             })
         })
@@ -126,51 +128,56 @@ pub fn accept_videos(paths: Vec<String>, state: State<AppState>) -> Result<Vec<V
 /// `reconstruct://progress`, then one of `reconstruct://done`, `://failed`, `://cancelled`.
 #[tauri::command]
 pub fn start_reconstruction(app: tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
-    begin_scan(app, paths.into_iter().map(PathBuf::from).collect(), None)
+    ScanRunner::begin(app, paths.into_iter().map(PathBuf::from).collect(), None)
 }
 
-/// Runs the reconstruction in the background; `name` names the scan folder (the room, if any).
-pub fn begin_scan(app: tauri::AppHandle, videos: Vec<PathBuf>, name: Option<String>) -> Result<(), String> {
-    let (reconstructor, scans_dir, token) = {
-        let state = app.state::<AppState>();
-        // The GPU rule is checked here as well as inside the backend: never ML without a GPU.
-        state.gpu.as_ref().map_err(|reason| reason.clone())?;
-        let config = state.config();
-        let reconstructor = config.reconstructor.as_ref().map_err(|reason| reason.clone())?.clone();
-        let scans_dir = config
-            .paths
-            .as_ref()
-            .ok_or("The configuration could not be loaded.")?
-            .scans
-            .clone();
-        drop(config);
-        let token = CancelToken::new();
-        let mut job = state.job.lock().map_err(|_| "Internal error: job lock poisoned")?;
-        if job.is_some() {
-            return Err("A scan is already running.".into());
-        }
-        *job = Some(token.clone());
-        (reconstructor, scans_dir, token)
-    };
+/// Starts reconstructions and keeps at most one running.
+pub struct ScanRunner;
 
-    let request = match name {
-        Some(room) => ScanRequest::named(&videos, &scans_dir, &room),
-        None => ScanRequest::new(&videos, &scans_dir),
-    };
-    std::thread::spawn(move || {
-        let outcome = reconstructor.run(&request, &token, &mut |event| {
-            let _ = app.emit("reconstruct://progress", event);
-        });
-        if let Ok(mut job) = app.state::<AppState>().job.lock() {
-            job.take();
-        }
-        let _ = match outcome {
-            Ok(result) => app.emit("reconstruct://done", &result),
-            Err(ReconstructError::Cancelled) => app.emit("reconstruct://cancelled", ()),
-            Err(error) => app.emit("reconstruct://failed", error.to_string()),
+impl ScanRunner {
+    /// Runs the reconstruction in the background; `name` names the scan folder (the room, if any).
+    pub fn begin(app: tauri::AppHandle, videos: Vec<PathBuf>, name: Option<String>) -> Result<(), String> {
+        let (reconstructor, scans_dir, token) = {
+            let state = app.state::<AppState>();
+            // The GPU rule is checked here as well as inside the backend: never ML without a GPU.
+            state.gpu.as_ref().map_err(|reason| reason.clone())?;
+            let config = state.config();
+            let reconstructor = config.reconstructor.as_ref().map_err(|reason| reason.clone())?.clone();
+            let scans_dir = config
+                .paths
+                .as_ref()
+                .ok_or("The configuration could not be loaded.")?
+                .scans
+                .clone();
+            drop(config);
+            let token = CancelToken::new();
+            let mut job = state.job.lock().map_err(|_| "Internal error: job lock poisoned")?;
+            if job.is_some() {
+                return Err("A scan is already running.".into());
+            }
+            *job = Some(token.clone());
+            (reconstructor, scans_dir, token)
         };
-    });
-    Ok(())
+
+        let request = match name {
+            Some(room) => ScanRequest::named(&videos, &scans_dir, &room),
+            None => ScanRequest::new(&videos, &scans_dir),
+        };
+        std::thread::spawn(move || {
+            let outcome = reconstructor.run(&request, &token, &mut |event| {
+                let _ = app.emit("reconstruct://progress", event);
+            });
+            if let Ok(mut job) = app.state::<AppState>().job.lock() {
+                job.take();
+            }
+            let _ = match outcome {
+                Ok(result) => app.emit("reconstruct://done", &result),
+                Err(ReconstructError::Cancelled) => app.emit("reconstruct://cancelled", ()),
+                Err(error) => app.emit("reconstruct://failed", error.to_string()),
+            };
+        });
+        Ok(())
+    }
 }
 
 #[tauri::command]
@@ -182,35 +189,51 @@ pub fn cancel_reconstruction(state: State<AppState>) {
     }
 }
 
-/// "livingroom-1792241488" -> "livingroom"; a folder without the time stamp is its own room.
-pub fn room_of_scan(folder: &str) -> String {
-    match folder.rsplit_once('-') {
-        Some((room, stamp)) if !room.is_empty() && stamp.chars().all(|c| c.is_ascii_digit()) => room.to_string(),
-        _ => folder.to_string(),
+/// A scan folder is named `<room>-<unix time>`; this maps it back to its room.
+pub struct ScanFolder;
+
+impl ScanFolder {
+    /// "livingroom-1792241488" -> "livingroom"; a folder without the time stamp is its own room.
+    pub fn room_of(folder: &str) -> String {
+        match folder.rsplit_once('-') {
+            Some((room, stamp)) if !room.is_empty() && stamp.chars().all(|c| c.is_ascii_digit()) => room.to_string(),
+            _ => folder.to_string(),
+        }
     }
 }
 
-/// Every finished scan, newest first.
-pub fn all_scans(paths: &AppPaths) -> Vec<ScanListItem> {
-    let mut scans: Vec<ScanListItem> = std::fs::read_dir(&paths.scans)
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let result = ScanResult::from_dir(&entry.path())?;
-            let modified_ms = entry
-                .metadata()
-                .and_then(|meta| meta.modified())
-                .ok()
-                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-                .map(|elapsed| elapsed.as_millis() as u64)
-                .unwrap_or(0);
-            let name = entry.file_name().to_string_lossy().into_owned();
-            Some(ScanListItem { room: room_of_scan(&name), name, modified_ms, result })
-        })
-        .collect();
-    scans.sort_by_key(|scan| std::cmp::Reverse(scan.modified_ms));
-    scans
+/// The finished scans in the scans directory.
+pub struct ScanCatalog<'a> {
+    paths: &'a AppPaths,
+}
+
+impl<'a> ScanCatalog<'a> {
+    pub fn new(paths: &'a AppPaths) -> Self {
+        Self { paths }
+    }
+
+    /// Every finished scan, newest first.
+    pub fn list(&self) -> Vec<ScanListItem> {
+        let mut scans: Vec<ScanListItem> = std::fs::read_dir(&self.paths.scans)
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let result = ScanResult::from_dir(&entry.path())?;
+                let modified_ms = entry
+                    .metadata()
+                    .and_then(|meta| meta.modified())
+                    .ok()
+                    .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                    .map(|elapsed| elapsed.as_millis() as u64)
+                    .unwrap_or(0);
+                let name = entry.file_name().to_string_lossy().into_owned();
+                Some(ScanListItem { room: ScanFolder::room_of(&name), name, modified_ms, result })
+            })
+            .collect();
+        scans.sort_by_key(|scan| std::cmp::Reverse(scan.modified_ms));
+        scans
+    }
 }
 
 /// Which way is up in a scan (the floor's normal from its plan), so the viewer can level it.
@@ -265,31 +288,43 @@ pub fn window_close(window: WebviewWindow) -> Result<(), String> {
     window.close().map_err(|error| error.to_string())
 }
 
-fn has_extension(file: &Path, extensions: &[String]) -> bool {
-    file.extension()
-        .map(|ext| ext.to_string_lossy().to_ascii_lowercase())
-        .is_some_and(|ext| extensions.contains(&ext))
+/// The file extensions that count as videos (from `capture.extensions`, with a built-in fallback).
+pub struct VideoFilter {
+    extensions: Vec<String>,
 }
 
-pub fn allowed_extensions(state: &AppState) -> Vec<String> {
-    state
-        .config()
-        .settings
-        .as_ref()
-        .map(|settings| settings.capture.extensions.clone())
-        .unwrap_or_else(|| FALLBACK_EXTENSIONS.iter().map(|ext| ext.to_string()).collect())
+impl VideoFilter {
+    pub fn of(state: &AppState) -> Self {
+        let extensions = state
+            .config()
+            .settings
+            .as_ref()
+            .map(|settings| settings.capture.extensions.clone())
+            .unwrap_or_else(|| FALLBACK_EXTENSIONS.iter().map(|ext| ext.to_string()).collect());
+        Self { extensions }
+    }
+
+    pub fn extensions(&self) -> &[String] {
+        &self.extensions
+    }
+
+    pub fn accepts(&self, file: &Path) -> bool {
+        file.extension()
+            .map(|ext| ext.to_string_lossy().to_ascii_lowercase())
+            .is_some_and(|ext| self.extensions.contains(&ext))
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::room_of_scan;
+    use super::ScanFolder;
 
     #[test]
     fn scan_folders_map_back_to_their_room() {
-        assert_eq!(room_of_scan("livingroom-1792241488"), "livingroom");
-        assert_eq!(room_of_scan("living-room-1792241488"), "living-room");
-        assert_eq!(room_of_scan("5-videos-1792241488"), "5-videos");
-        assert_eq!(room_of_scan("kitchen"), "kitchen");
-        assert_eq!(room_of_scan("-1792241488"), "-1792241488");
+        assert_eq!(ScanFolder::room_of("livingroom-1792241488"), "livingroom");
+        assert_eq!(ScanFolder::room_of("living-room-1792241488"), "living-room");
+        assert_eq!(ScanFolder::room_of("5-videos-1792241488"), "5-videos");
+        assert_eq!(ScanFolder::room_of("kitchen"), "kitchen");
+        assert_eq!(ScanFolder::room_of("-1792241488"), "-1792241488");
     }
 }

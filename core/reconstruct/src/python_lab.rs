@@ -1,7 +1,7 @@
 // ---
 // Owner: Krinxy <dominic.bechtold@icloud.com>
 // Contributors: Krinxy <dominic.bechtold@icloud.com>
-// Last modified: 2026-10-17
+// Last modified: 2026-11-01
 // ---
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -23,6 +23,8 @@ const LOG_TAIL_LINES: usize = 6;
 const MAX_PARENT_LEVELS: usize = 6;
 /// Share of the progress bar taken by the Python stage when a splat is trained afterwards
 /// (a few minutes, more for a long walk-through, against about ten for the training).
+/// Fewer steps than this never give a usable splat, whatever the preset asks for.
+const MIN_TRAIN_STEPS: u32 = 1000;
 const PYTHON_SHARE: f32 = 0.35;
 /// Refinement (densify and prune) runs about once per pass over the images: not more often than this ...
 const REFINE_MIN: u32 = 150;
@@ -295,7 +297,7 @@ impl PythonLabReconstructor {
         let log = File::create(&log_path).map_err(ReconstructError::ScanDir)?;
         let log_err = log.try_clone().map_err(ReconstructError::ScanDir)?;
 
-        let steps = self.preset.train_iterations.max(1000);
+        let steps = self.preset.train_iterations.max(MIN_TRAIN_STEPS);
         // "Roughly the number of images it takes to cover the scene" (Brush): the frames of this scan.
         let frames = std::fs::read_to_string(request.scan_dir.join("report.json"))
             .ok()
