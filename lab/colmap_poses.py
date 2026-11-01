@@ -28,7 +28,7 @@ from pathlib import Path
 
 import numpy as np
 
-COLMAP = os.environ.get("KLECKS_COLMAP") or shutil.which("colmap") or r"D:\Projects\tools\colmap\bin\colmap.exe"
+COLMAP = os.environ.get("KLECKS_COLMAP") or shutil.which("colmap") or "colmap"
 MAX_EXHAUSTIVE = 900   # more frames than this are matched along the film and against a vocabulary tree instead
 SIFT_FEATURES = 8192
 

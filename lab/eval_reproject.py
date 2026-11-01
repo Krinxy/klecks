@@ -15,7 +15,7 @@ and compared with the real picture (reduced to the model's working size):
 A ghosting or smeared cloud has high error. This is a self-consistency check (the frames were used
 to build the cloud), good for comparing variants, not an absolute truth. Use --save to look at it.
 
-    python lab/eval_reproject.py D:/Projects/klecks-runs/single7695 [--points points.ply]
+    python lab/eval_reproject.py <runs>/single7695 [--points points.ply]
 """
 from __future__ import annotations
 

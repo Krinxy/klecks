@@ -32,3 +32,6 @@ __pycache__/
 *.splat
 *.onnx
 *.safetensors
+
+# Build/tuning artefacts
+/app/target/

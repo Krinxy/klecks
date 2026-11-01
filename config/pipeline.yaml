@@ -4,7 +4,7 @@ pipeline:
   # Temporary reconstruction backend: runs lab/room_scan.py in the conda lab, then trains a Gaussian
   # splat with Brush (dev only, not shippable).
   # Machine-specific paths belong in your override file, not here:
-  #   %APPDATA%\klecks\pipeline.yaml  ->  pipeline: { reconstruct: { python: "D:/Projects/klecks-lab/python.exe", ... } }
+  #   %APPDATA%\klecks\pipeline.yaml  ->  pipeline: { reconstruct: { python: "<lab-env>/python.exe", ... } }
   # Later replaced by an ONNX model run from Rust (backend: onnx).
   reconstruct:
     backend: python_lab

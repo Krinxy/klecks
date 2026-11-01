@@ -16,8 +16,8 @@ meant to replace it. GPU only: exits with code 2 if CUDA is missing, klecks neve
 Progress is printed as JSON lines prefixed with ``@@`` so the app can parse them:
     @@{"stage": "inference", "pct": 40, "message": "Estimating depth"}
 
-    python lab/room_scan.py media/*.MP4 --out D:/Projects/klecks-runs/room \
-        --upscale-model D:/Models/upscale/4x-UltraSharp.safetensors
+    python lab/room_scan.py media/*.MP4 --out <runs>/room \
+        --upscale-model <models>/upscale/4x-UltraSharp.safetensors
 """
 from __future__ import annotations
 

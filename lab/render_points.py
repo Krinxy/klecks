@@ -9,7 +9,7 @@ The first camera sits at the origin looking along +z (VGGT's world frame). Views
 that camera show whether the estimated depth is plausible. Pure numpy + OpenCV, CPU-only
 because it is just plotting, not ML.
 
-    python lab/render_points.py D:/Projects/klecks-runs/img7695
+    python lab/render_points.py <runs>/img7695
 """
 from __future__ import annotations
 

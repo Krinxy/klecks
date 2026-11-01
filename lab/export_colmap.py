@@ -12,7 +12,7 @@
 
 VGGT poses are OpenCV world->camera ([R|t], x right, y down, z forward), the same convention COLMAP uses.
 
-    python lab/export_colmap.py D:/Projects/klecks-runs/room1 [--upscale-model PATH] [--points 300000]
+    python lab/export_colmap.py <runs>/room1 [--upscale-model PATH] [--points 300000]
 """
 from __future__ import annotations
 

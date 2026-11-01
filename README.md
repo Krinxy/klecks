@@ -46,9 +46,9 @@ out of git, `%APPDATA%\klecks\pipeline.yaml`:
 ```yaml
 pipeline:
   reconstruct:
-    python: "D:/Projects/klecks-lab/python.exe"   # conda env from lab/environment-cuda.yml
-    hf_home: "D:/Models/huggingface"                # where the 5 GB of weights are cached
-    brush: "D:/Projects/tools/brush/brush_app.exe"  # empty = skip the splat, show the point cloud only
+    python: "<lab-env>/python.exe"   # conda env from lab/environment-cuda.yml
+    hf_home: "<hf-cache>"                # where the 5 GB of weights are cached
+    brush: "<path-to>/brush_app.exe"  # empty = skip the splat, show the point cloud only
 ```
 
 Scans go to `paths.scans_dir` (override it the same way in `klecks.yaml`; each scan is ~100 MB).

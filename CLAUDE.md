@@ -45,7 +45,7 @@ cd app && cargo tauri build --debug --no-bundle      # quick exe without install
 .\scriptsuild-desktop.ps1                          # release exe as one file on the desktop (-Debug for a quick one)
 ```
 
-Set `CARGO_TARGET_DIR` to a drive with space (`D:\Projects\klecks-target`); unset `NO_COLOR` for Trunk.
+Set `CARGO_TARGET_DIR` to a drive with space (`<target-dir>`); unset `NO_COLOR` for Trunk.
 Config lookup order: `KLECKS_CONFIG_DIR`, `config/` next to the exe, `config/` in a parent folder.
 When running the built exe from a target dir, set `KLECKS_CONFIG_DIR`.
 
@@ -100,7 +100,7 @@ When running the built exe from a target dir, set `KLECKS_CONFIG_DIR`.
   explicitly when extracting (see `lab/room_scan.py`; read it from ffprobe's JSON, HDR clips list several side-data blocks), or models get sideways images. VGGT's own loader
   also centre-crops portrait frames to a square; `room_scan.py` resizes the whole frame instead.
 - VGGT weights are CC-BY-NC-4.0 (non-commercial). Keep that in mind before distributing klecks.
-- Lab env lives at `D:\Projects\klecks-lab` (conda `-p`), run outputs in `D:\Projects\klecks-runs`;
+- Lab env lives at `<lab-env>` (conda `-p`), run outputs in `<runs>`;
   test videos in `media/` are git-ignored.
 - A room's screen (`room.rs`) shows the plan from `plan.json` (written by `lab/room_plan.py` at the end of a scan; run it by hand
   for older scans), the free camera (same viewer, embedded) and each film's share of the scene's frames (`room_overview`).
@@ -121,7 +121,7 @@ When running the built exe from a target dir, set `KLECKS_CONFIG_DIR`.
 - If the 3D view cannot be created (WebGL), `klecksViewer.mount` returns false and `lastError()` says why; never let it throw
   into wasm, that leaves "Loading the scene" on screen for ever. viewer.js is hashed by Trunk so a webview cannot keep an old one.
 - Camera quality: VGGT places cameras window by window and the windows drift (smeared splat). `lab/colmap_poses.py` runs COLMAP 4
-  (GPU SIFT, exhaustive matching, global mapper; binary in `D:\Projects	ools\colmap`, override with `KLECKS_COLMAP`) on the frames,
+  (GPU SIFT, exhaustive matching, global mapper; binary in `<tools>/colmap`, override with `KLECKS_COLMAP`) on the frames,
   `lab/sfm_align.py` fits a similarity transform of VGGT's cameras onto COLMAP's and moves cloud, depth, plan and doors into
   COLMAP's frame, and installs COLMAP's undistorted dataset as `<scan>/colmap` for Brush. Any failure falls back to the VGGT cameras
   (`--no-sfm` forces that). Blurred frames are dropped per film (`drop_blurry`), `lab/clean_splat.py` removes floaters from a splat,

@@ -4,11 +4,11 @@ Python playground for experiments and the **temporary reconstruction backend**. 
 with the program: the plan is an ONNX model run from Rust (see the root README).
 
 ```powershell
-conda env create -f lab/environment-cuda.yml          # or: conda create -p D:\Projects\klecks-lab python=3.11
+conda env create -f lab/environment-cuda.yml          # or: conda create -p <lab-env> python=3.11
 conda activate klecks-lab
 ```
 
-Only an NVIDIA/CUDA environment exists so far. Model weights land in `HF_HOME` (`D:\Models\huggingface`).
+Only an NVIDIA/CUDA environment exists so far. Model weights land in `HF_HOME` (`<hf-cache>`).
 
 ## Scripts
 
@@ -26,8 +26,8 @@ Only an NVIDIA/CUDA environment exists so far. Model weights land in `HF_HOME` (
 | `room_plan.py`, `detect_doors.py` | Floor plan with coverage scores; doors from OWLv2 + depth |
 
 ```powershell
-python lab/room_scan.py media/*.MP4 --out D:/Projects/klecks-runs/room --colmap
-D:/Projects/tools/brush/brush_app.exe D:/Projects/klecks-runs/room/colmap --total-steps 30000 --export-path D:/Projects/klecks-runs/room/splat
+python lab/room_scan.py media/*.MP4 --out <runs>/room --colmap
+brush_app <runs>/room/colmap --total-steps 30000 --export-path <runs>/room/splat
 ```
 
 The app does exactly this (core/reconstruct runs both steps). Outputs stay outside the repo; they show the owner's home.

@@ -10,7 +10,7 @@ the splat renders for them to <export dir>/eval_<step>/NNNN.png. This compares t
 the real video frames (PSNR in dB, SSIM 0..1; higher is better) and reports crispness: edge energy of
 the render relative to the real frame (1.0 = as crisp as the video, below 1 = blurrier).
 
-    python lab/eval_splat.py D:/Projects/klecks-runs/room2 D:/Projects/klecks-runs/room2/splat_eval/eval_8000
+    python lab/eval_splat.py <runs>/room2 <runs>/room2/splat_eval/eval_8000
 """
 from __future__ import annotations
 
